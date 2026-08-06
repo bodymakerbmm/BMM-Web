@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="BODYMAKER BMM Web - 店舗売上・在庫分析">
-  <title>BMM Web v0.3</title>
+  <title>BMM Web v0.3.1</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
     <div>
       <span class="brand-kicker">BODYMAKER</span>
-      <h1>BMM Web <small class="version">v0.3</small></h1>
+      <h1>BMM Web <small class="version">v0.3.1</small></h1>
       <p>店舗売上・在庫分析</p>
     </div>
     <div class="top-actions">
@@ -24,7 +24,7 @@
   <main class="container">
     <section class="notice" id="setupNotice">
       <strong>最初に設定が必要です。</strong>
-      「設定」から店舗名とGoogleスプレッドシートURLを登録してください。
+      「設定」から店舗名と、売上タブを開いた状態のGoogleスプレッドシートURLを登録してください。
       実データはGitHubへ保存されず、この端末のブラウザ内に最大3年分保存されます。
     </section>
 
@@ -174,15 +174,16 @@
       </div>
 
       <p class="muted">
-        Googleスプレッドシートの共有設定は「リンクを知っている全員・閲覧者」にしてください。
-        URLはこのブラウザに保存されます。
+        Googleスプレッドシートの共有設定は「リンクを知っている全員・閲覧者」にしてください。<br>
+        <strong>売上タブを開いてから、そのURLを貼り付けます。</strong> タブ名は店舗ごとに違っていても問題ありません。<br>
+        売上タブに商品名が表示されている場合、商品マスタのURLは不要です。
       </p>
 
       <div id="storeRows"></div>
       <button id="addStoreBtn" type="button" class="btn">＋ 店舗を追加</button>
 
       <details>
-        <summary>列の割り当て（現在のシートに合わせた初期値）</summary>
+        <summary>列の割り当て（通常は自動判定・変更不要）</summary>
         <div class="mapping-grid">
           <label>JAN列<input id="mapJan" value="A"></label>
           <label>品番列<input id="mapSku" value="B"></label>
@@ -194,7 +195,7 @@
           <label>商品名列<input id="mapName" value="H"></label>
           <label>在庫列<input id="mapStock" placeholder="例: I"></label>
         </div>
-        <p class="muted">画像で確認できた初期値：A=JAN、B=品番、C=売れ数、D=売上金額、E=店舗、F=日付、H=商品名。</p>
+        <p class="muted">BMMが売上タブの内容から自動判定します。東大阪店の初期値はA=JAN、B=品番、C=売れ数、D=売上金額、E=店舗、F=日付、H=商品名です。</p>
       </details>
 
       <div class="dialog-actions">
@@ -206,10 +207,10 @@
   </dialog>
 
   <template id="storeRowTemplate">
-    <div class="store-row">
+    <div class="store-row store-row-v031">
       <input class="store-name" placeholder="店舗名（例：東大阪店）">
-      <input class="store-url" placeholder="GoogleスプレッドシートURL">
-      <input class="store-sheet" placeholder="シート名（任意）">
+      <input class="store-url" placeholder="売上タブを開いた状態のURL">
+      <input class="master-url" placeholder="商品マスタのタブURL（商品名が空の場合のみ）">
       <button type="button" class="btn btn-danger remove-store">削除</button>
     </div>
   </template>

@@ -230,14 +230,33 @@
       : "未同期";
   }
 
-  async function fetchStore(store){
-    const url=C.sheetUrlToCsv(store.url,store.sheet);
+  async function fetchCsvRows(sourceUrl,label){
+    const url=C.sheetUrlToCsv(sourceUrl,"");
     const response=await fetch(url,{cache:"no-store"});
-    if(!response.ok) throw new Error(`${store.name}: 読込失敗（${response.status}）`);
+    if(!response.ok) throw new Error(`${label}: 読込失敗（${response.status}）`);
     const text=await response.text();
-    if(/<!doctype html|<html/i.test(text)) throw new Error(`${store.name}: シートの共有設定またはURLを確認してください。`);
-    const rows=C.parseCSV(text);
-    return C.rowsToRecords(rows,state.config.mapping,store.name);
+    if(/<!doctype html|<html/i.test(text)) throw new Error(`${label}: 共有設定またはURLを確認してください。`);
+    return C.parseCSV(text);
+  }
+
+  async function fetchStore(store){
+    const salesRows=await fetchCsvRows(store.url,`${store.name} 売上`);
+    const detected=C.detectSalesMapping(salesRows);
+    const mapping={...detected,...Object.fromEntries(Object.entries(state.config.mapping||{}).filter(([,v])=>String(v||"").trim()))};
+    let records=C.rowsToRecords(salesRows,mapping,store.name);
+    let validation=C.validateSalesRecords(records);
+    if(!validation.ok){
+      throw new Error(`${store.name}: 売上タブを判定できません。売上データのタブを開いた状態でURLをコピーしてください。`);
+    }
+    records=validation.valid;
+
+    if(store.masterUrl){
+      const masterRows=await fetchCsvRows(store.masterUrl,`${store.name} 商品マスタ`);
+      const masterMapping=C.detectMasterMapping(masterRows);
+      const masterIndex=C.buildMasterIndex(masterRows,masterMapping);
+      records=C.enrichWithMaster(records,masterIndex);
+    }
+    return {records,mapping,usedMaster:Boolean(store.masterUrl),hasNames:records.some(r=>String(r.name||"").trim())};
   }
 
   async function syncAll(options={}){
@@ -263,7 +282,8 @@
           errors.push(result.reason.message);
           continue;
         }
-        const rows=result.value;
+        const payload=result.value;
+        const rows=payload.records;
         await BMMDB.replaceStoreDates(store.name,rows);
         const range=C.dataRange(rows);
         await BMMDB.addSyncLog({
@@ -308,7 +328,7 @@
     const node=$("storeRowTemplate").content.firstElementChild.cloneNode(true);
     node.querySelector(".store-name").value=data.name||"";
     node.querySelector(".store-url").value=data.url||"";
-    node.querySelector(".store-sheet").value=data.sheet||"";
+    node.querySelector(".master-url").value=data.masterUrl||"";
     node.querySelector(".remove-store").addEventListener("click",()=>node.remove());
     $("storeRows").appendChild(node);
   }
@@ -326,7 +346,7 @@
     const stores=[...document.querySelectorAll(".store-row")].map(row=>({
       name:row.querySelector(".store-name").value.trim(),
       url:row.querySelector(".store-url").value.trim(),
-      sheet:row.querySelector(".store-sheet").value.trim()
+      masterUrl:row.querySelector(".master-url").value.trim()
     })).filter(x=>x.name&&x.url);
     const mapping={};
     Object.keys(defaultMapping).forEach(k=>{const el=$(`map${k[0].toUpperCase()+k.slice(1)}`);mapping[k]=el?el.value.trim():"";});

@@ -225,10 +225,102 @@
     return dates[dates.length-1]||"";
   }
 
+
+  function cellScore(rows,index,test){
+    const sample=rows.slice(0,Math.min(rows.length,80));
+    if(index<0||!sample.length) return 0;
+    let hit=0,total=0;
+    for(const row of sample){
+      const value=row[index];
+      if(String(value??"").trim()==="") continue;
+      total++;
+      if(test(value)) hit++;
+    }
+    return total?hit/total:0;
+  }
+
+  function indexToCol(index){
+    if(index<0) return "";
+    let n=index+1,text="";
+    while(n>0){
+      const rem=(n-1)%26;
+      text=String.fromCharCode(65+rem)+text;
+      n=Math.floor((n-1)/26);
+    }
+    return text;
+  }
+
+  function detectSalesMapping(rows){
+    const width=Math.max(0,...rows.map(r=>r.length));
+    const indexes=[...Array(width).keys()];
+    const header=(rows[0]||[]).map(v=>normalizeText(v));
+    const findHeader=terms=>header.findIndex(v=>terms.some(t=>v.includes(t)));
+    const choose=(headerIndex,scorer,fallback)=>{
+      if(headerIndex>=0) return headerIndex;
+      let best={index:fallback,score:-1};
+      for(const i of indexes){
+        const score=scorer(i);
+        if(score>best.score) best={index:i,score};
+      }
+      return best.score>=0.45?best.index:fallback;
+    };
+    const jan=choose(findHeader(["jan","バーコード"]),i=>cellScore(rows,i,v=>/^\d{8,14}$/.test(String(v).replace(/\D/g,""))),0);
+    const date=choose(findHeader(["日付","売上日"]),i=>cellScore(rows,i,v=>/^\d{4}[\/.-]\d{1,2}[\/.-]\d{1,2}/.test(String(v).trim())),5);
+    const qty=choose(findHeader(["売れ数","数量","個数"]),i=>cellScore(rows,i,v=>{const n=parseNumber(v);return Number.isFinite(n)&&Math.abs(n)<=9999;}),2);
+    const sales=choose(findHeader(["売上金額","金額","売上"]),i=>cellScore(rows,i,v=>parseNumber(v)!==0),3);
+    const store=choose(findHeader(["店舗名","店舗"]),i=>cellScore(rows,i,v=>/[店店舗]|東大阪|名古屋|江坂|堺|岸和田/.test(String(v))),4);
+    const sku=choose(findHeader(["品番","商品コード"]),i=>cellScore(rows,i,v=>/[A-Za-z]/.test(String(v))&&/[0-9]/.test(String(v))),1);
+    const name=choose(findHeader(["商品名","名称"]),i=>cellScore(rows,i,v=>String(v).trim().length>=3&&!/^\d+$/.test(String(v).trim())),7);
+    const shelf=findHeader(["棚番号","棚"]);
+    const stock=findHeader(["在庫","在庫数"]);
+    const toCol=i=>i<0?"":indexToCol(i);
+    return {jan:toCol(jan),sku:toCol(sku),qty:toCol(qty),sales:toCol(sales),store:toCol(store),date:toCol(date),shelf:toCol(shelf),name:toCol(name),stock:toCol(stock)};
+  }
+
+  function validateSalesRecords(records){
+    const valid=records.filter(r=>r.date&&(r.jan||r.sku||r.name)&&(r.qty!==0||r.sales!==0));
+    const dateRate=records.length?records.filter(r=>r.date).length/records.length:0;
+    return {valid,validCount:valid.length,dateRate,hasNames:valid.some(r=>String(r.name||"").trim()),ok:valid.length>0&&dateRate>=0.5};
+  }
+
+  function detectMasterMapping(rows){
+    const width=Math.max(0,...rows.map(r=>r.length));
+    let jan=-1,sku=-1,name=-1;
+    for(let i=0;i<width;i++){
+      const janScore=cellScore(rows,i,v=>/^\d{8,14}$/.test(String(v).replace(/\D/g,"")));
+      if(janScore>0.55) jan=i;
+      const skuScore=cellScore(rows,i,v=>/[A-Za-z]/.test(String(v))&&/[0-9]/.test(String(v)));
+      if(skuScore>0.45&&sku<0) sku=i;
+      const nameScore=cellScore(rows,i,v=>String(v).trim().length>=4&&!/^\d+$/.test(String(v).trim()));
+      if(nameScore>0.6) name=i;
+    }
+    return {jan:indexToCol(jan),sku:indexToCol(sku),name:indexToCol(name)};
+  }
+
+  function buildMasterIndex(rows,mapping){
+    const janI=colToIndex(mapping.jan),skuI=colToIndex(mapping.sku),nameI=colToIndex(mapping.name);
+    const byJan=new Map(),bySku=new Map();
+    for(const row of rows){
+      const item={jan:String(row[janI]??"").trim(),sku:String(row[skuI]??"").trim(),name:String(row[nameI]??"").trim()};
+      if(item.jan) byJan.set(item.jan,item);
+      if(item.sku) bySku.set(normalizeText(item.sku),item);
+    }
+    return {byJan,bySku};
+  }
+
+  function enrichWithMaster(records,index){
+    return records.map(r=>{
+      const item=index?.byJan?.get(r.jan)||index?.bySku?.get(normalizeText(r.sku));
+      if(!item) return r;
+      return {...r,jan:r.jan||item.jan,sku:r.sku||item.sku,name:r.name||item.name};
+    });
+  }
+
   return {
     colToIndex,parseCSV,parseNumber,parseDate,sheetUrlToCsv,rowsToRecords,
     filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods,
     normalizeText,matchesSearch,recordKey,mergeHistory,dataRange,
-    cutoffDateForYears,keepRecentYears,maxRecordDate
+    cutoffDateForYears,keepRecentYears,maxRecordDate,
+    indexToCol,detectSalesMapping,validateSalesRecords,detectMasterMapping,buildMasterIndex,enrichWithMaster
   };
 });

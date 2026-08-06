@@ -24,3 +24,6 @@ dialog{width:min(1000px,94vw);border:1px solid var(--border);border-radius:20px;
 .file-btn{display:inline-flex;align-items:center}
 .history-stat{display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)}
 .history-stat span{color:var(--muted)}
+
+.store-row-v031{grid-template-columns:170px minmax(320px,1fr) minmax(280px,.8fr) auto}
+@media(max-width:900px){.store-row-v031{grid-template-columns:1fr}}
