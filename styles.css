@@ -27,3 +27,9 @@ dialog{width:min(1000px,94vw);border:1px solid var(--border);border-radius:20px;
 
 .store-row-v031{grid-template-columns:170px minmax(320px,1fr) minmax(280px,.8fr) auto}
 @media(max-width:900px){.store-row-v031{grid-template-columns:1fr}}
+
+.store-row-v032{grid-template-columns:180px 1fr auto}
+.common-data-grid{display:grid;gap:12px;margin:16px 0}
+.common-data-grid label{display:grid;gap:7px;color:var(--muted);font-size:13px}
+.common-data-grid input{width:100%;background:#0e121b;border:1px solid var(--border);color:var(--text);padding:12px;border-radius:10px}
+@media(max-width:800px){.store-row-v032{grid-template-columns:1fr}}

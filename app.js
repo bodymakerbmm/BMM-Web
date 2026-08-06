@@ -239,24 +239,28 @@
     return C.parseCSV(text);
   }
 
-  async function fetchStore(store){
+  async function loadCommonMasterIndex(){
+    const url=String(state.config.commonMasterUrl||"").trim();
+    if(!url) return null;
+    const masterRows=await fetchCsvRows(url,"共通商品マスタ");
+    const masterMapping=C.detectMasterMapping(masterRows);
+    return C.buildMasterIndex(masterRows,masterMapping);
+  }
+
+  async function fetchStore(store,masterIndex){
     const salesRows=await fetchCsvRows(store.url,`${store.name} 売上`);
     const detected=C.detectSalesMapping(salesRows);
     const mapping={...detected,...Object.fromEntries(Object.entries(state.config.mapping||{}).filter(([,v])=>String(v||"").trim()))};
     let records=C.rowsToRecords(salesRows,mapping,store.name);
-    let validation=C.validateSalesRecords(records);
+    const validation=C.validateSalesRecords(records);
     if(!validation.ok){
       throw new Error(`${store.name}: 売上タブを判定できません。売上データのタブを開いた状態でURLをコピーしてください。`);
     }
     records=validation.valid;
-
-    if(store.masterUrl){
-      const masterRows=await fetchCsvRows(store.masterUrl,`${store.name} 商品マスタ`);
-      const masterMapping=C.detectMasterMapping(masterRows);
-      const masterIndex=C.buildMasterIndex(masterRows,masterMapping);
+    if(masterIndex){
       records=C.enrichWithMaster(records,masterIndex);
     }
-    return {records,mapping,usedMaster:Boolean(store.masterUrl),hasNames:records.some(r=>String(r.name||"").trim())};
+    return {records,mapping,hasNames:records.some(r=>String(r.name||"").trim())};
   }
 
   async function syncAll(options={}){
@@ -271,7 +275,16 @@
     updateStatus(silent?"自動更新中…":"同期中…");
 
     try{
-      const settled=await Promise.allSettled(state.config.stores.map(fetchStore));
+      let masterIndex=null;
+      try{
+        masterIndex=await loadCommonMasterIndex();
+      }catch(masterError){
+        if(!silent) alert(masterError.message);
+        else console.error(masterError);
+      }
+      const settled=await Promise.allSettled(
+        state.config.stores.map(store=>fetchStore(store,masterIndex))
+      );
       const errors=[];
       let totalRows=0;
 
@@ -328,7 +341,6 @@
     const node=$("storeRowTemplate").content.firstElementChild.cloneNode(true);
     node.querySelector(".store-name").value=data.name||"";
     node.querySelector(".store-url").value=data.url||"";
-    node.querySelector(".master-url").value=data.masterUrl||"";
     node.querySelector(".remove-store").addEventListener("click",()=>node.remove());
     $("storeRows").appendChild(node);
   }
@@ -345,12 +357,36 @@
   function collectSettings(){
     const stores=[...document.querySelectorAll(".store-row")].map(row=>({
       name:row.querySelector(".store-name").value.trim(),
-      url:row.querySelector(".store-url").value.trim(),
-      masterUrl:row.querySelector(".master-url").value.trim()
+      url:row.querySelector(".store-url").value.trim()
     })).filter(x=>x.name&&x.url);
     const mapping={};
     Object.keys(defaultMapping).forEach(k=>{const el=$(`map${k[0].toUpperCase()+k.slice(1)}`);mapping[k]=el?el.value.trim():"";});
-    return {stores,mapping};
+    return {
+      ...state.config,
+      stores,
+      mapping,
+      commonMasterUrl:String(state.config.commonMasterUrl||"").trim()
+    };
+  }
+
+  function openCommonData(){
+    $("commonMasterUrl").value=state.config.commonMasterUrl||"";
+    $("commonDataMessage").textContent="";
+    $("commonDataDialog").showModal();
+  }
+
+  async function saveCommonMaster(){
+    state.config.commonMasterUrl=$("commonMasterUrl").value.trim();
+    await saveConfig();
+    $("commonDataDialog").close();
+    await syncAll();
+  }
+
+  async function clearCommonMaster(){
+    state.config.commonMasterUrl="";
+    await saveConfig();
+    $("commonMasterUrl").value="";
+    $("commonDataMessage").textContent="共通商品マスタの登録を解除しました。";
   }
 
   async function loadDemo(){
@@ -375,7 +411,10 @@
 
   function bind(){
     $("refreshBtn").addEventListener("click",syncAll);
+    $("commonDataBtn").addEventListener("click",openCommonData);
     $("settingsBtn").addEventListener("click",openSettings);
+    $("saveCommonMasterBtn").addEventListener("click",saveCommonMaster);
+    $("clearCommonMasterBtn").addEventListener("click",clearCommonMaster);
     $("applyFilterBtn").addEventListener("click",applyFilter);
     $("clearFilterBtn").addEventListener("click",()=>{$("dateFrom").value="";$("dateTo").value="";applyFilter();});
     $("productSearch").addEventListener("input",()=>renderProducts(C.aggregateProducts(state.filtered).sort((a,b)=>b.sales-a.sales)));

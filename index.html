@@ -4,20 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="BODYMAKER BMM Web - 店舗売上・在庫分析">
-  <title>BMM Web v0.3.1</title>
+  <title>BMM Web v0.3.2</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
     <div>
       <span class="brand-kicker">BODYMAKER</span>
-      <h1>BMM Web <small class="version">v0.3.1</small></h1>
+      <h1>BMM Web <small class="version">v0.3.2</small></h1>
       <p>店舗売上・在庫分析</p>
     </div>
     <div class="top-actions">
       <span id="syncStatus" class="status">起動確認中…</span>
       <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
-      <button id="settingsBtn" class="btn">設定</button>
+      <button id="commonDataBtn" class="btn">共通商品マスタ</button>
+      <button id="settingsBtn" class="btn">店舗設定</button>
     </div>
   </header>
 
@@ -175,8 +176,8 @@
 
       <p class="muted">
         Googleスプレッドシートの共有設定は「リンクを知っている全員・閲覧者」にしてください。<br>
-        <strong>売上タブを開いてから、そのURLを貼り付けます。</strong> タブ名は店舗ごとに違っていても問題ありません。<br>
-        売上タブに商品名が表示されている場合、商品マスタのURLは不要です。
+        <strong>各店舗の売上タブを開いてから、そのURLを貼り付けます。</strong> タブ名は店舗ごとに違っていても問題ありません。<br>
+        商品マスタは店舗ごとに登録せず、画面右上の「共通商品マスタ」から1回だけ登録します。
       </p>
 
       <div id="storeRows"></div>
@@ -206,11 +207,37 @@
     </form>
   </dialog>
 
+
+  <dialog id="commonDataDialog">
+    <form method="dialog" class="dialog-card" id="commonDataForm">
+      <div class="dialog-head">
+        <div><span class="brand-kicker">BMM WEB</span><h2>共通商品マスタ設定</h2></div>
+        <button value="cancel" class="icon-btn" aria-label="閉じる">×</button>
+      </div>
+
+      <p class="muted">
+        全店舗で共通して使う商品マスタを、ここで1回だけ登録します。<br>
+        商品マスタのタブを開いた状態のGoogleスプレッドシートURLを貼り付けてください。
+      </p>
+
+      <div class="common-data-grid">
+        <label>商品マスタのタブURL
+          <input id="commonMasterUrl" placeholder="https://docs.google.com/spreadsheets/...&gid=...">
+        </label>
+      </div>
+
+      <div class="dialog-actions">
+        <button id="clearCommonMasterBtn" type="button" class="btn btn-danger">登録を解除</button>
+        <button id="saveCommonMasterBtn" type="button" class="btn btn-primary">保存して全店舗を同期</button>
+      </div>
+      <div id="commonDataMessage" class="message"></div>
+    </form>
+  </dialog>
+
   <template id="storeRowTemplate">
-    <div class="store-row store-row-v031">
+    <div class="store-row store-row-v032">
       <input class="store-name" placeholder="店舗名（例：東大阪店）">
       <input class="store-url" placeholder="売上タブを開いた状態のURL">
-      <input class="master-url" placeholder="商品マスタのタブURL（商品名が空の場合のみ）">
       <button type="button" class="btn btn-danger remove-store">削除</button>
     </div>
   </template>
