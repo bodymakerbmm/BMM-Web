@@ -3,11 +3,11 @@
   const C = window.BMMCore;
   const STORAGE = {
     config: "bmm-web-config-v1",
-    records: "bmm-web-records-v1",
-    synced: "bmm-web-synced-v1"
+    oldRecordsV1: "bmm-web-records-v1",
+    oldRecordsV2: "bmm-web-records-v2"
   };
   const defaultMapping = {jan:"A",sku:"B",qty:"C",sales:"D",store:"E",date:"F",shelf:"",name:"H",stock:""};
-  let state = {config:{stores:[],mapping:{...defaultMapping}},records:[],filtered:[]};
+  let state = {config:{stores:[],mapping:{...defaultMapping}},records:[],filtered:[],syncLog:[],lastSynced:""};
 
   const $ = id => document.getElementById(id);
   const yen = n => new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
@@ -15,17 +15,43 @@
   const pct = n => n===null?"—":`${(n*100).toFixed(1)}%`;
   const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-  function loadState(){
-    try{state.config=JSON.parse(localStorage.getItem(STORAGE.config))||state.config;}catch(_){}
-    try{state.records=JSON.parse(localStorage.getItem(STORAGE.records))||[];}catch(_){}
+  async function loadState(){
+    try{
+      state.config=await BMMDB.getMeta("config")||JSON.parse(localStorage.getItem(STORAGE.config))||state.config;
+    }catch(_){
+      state.config=state.config;
+    }
     state.config.mapping={...defaultMapping,...(state.config.mapping||{})};
+
+    state.records=await BMMDB.getAll(BMMDB.stores.records);
+    state.syncLog=await BMMDB.getSyncLog();
+    state.lastSynced=await BMMDB.getMeta("lastSynced")||"";
+
+    if(!state.records.length){
+      let legacy=[];
+      try{legacy=JSON.parse(localStorage.getItem(STORAGE.oldRecordsV2))||[];}catch(_){}
+      if(!legacy.length){
+        try{legacy=JSON.parse(localStorage.getItem(STORAGE.oldRecordsV1))||[];}catch(_){}
+      }
+      if(legacy.length){
+        const groups=new Map();
+        legacy.forEach(r=>{
+          const key=r.store||"未設定";
+          if(!groups.has(key)) groups.set(key,[]);
+          groups.get(key).push(r);
+        });
+        for(const [store,records] of groups){
+          await BMMDB.replaceStoreDates(store,records);
+        }
+        state.records=await BMMDB.getAll(BMMDB.stores.records);
+      }
+    }
     state.filtered=[...state.records];
   }
 
-  function saveState(){
+  async function saveConfig(){
     localStorage.setItem(STORAGE.config,JSON.stringify(state.config));
-    localStorage.setItem(STORAGE.records,JSON.stringify(state.records));
-    localStorage.setItem(STORAGE.synced,new Date().toISOString());
+    await BMMDB.setMeta("config",state.config);
   }
 
   function table(headers,rows){
@@ -71,6 +97,7 @@
     renderShelves(r);
     renderABC(r);
     renderStock(products);
+    renderHistory();
     $("setupNotice").hidden=state.config.stores.length>0||state.records.length>0;
     updateStatus();
   }
@@ -82,8 +109,8 @@
   }
 
   function renderProducts(products){
-    const q=$("productSearch").value.trim().toLowerCase();
-    const list=products.filter(p=>!q||[p.jan,p.sku,p.name].some(v=>String(v).toLowerCase().includes(q))).slice(0,500);
+    const q=$("productSearch").value;
+    const list=products.filter(p=>C.matchesSearch(p,q)).slice(0,500);
     $("productTable").innerHTML=table(
       [{label:"JAN"},{label:"品番"},{label:"商品名"},{label:"売れ数",num:true},{label:"売上",num:true},{label:"店舗"}],
       list.map(p=>[esc(p.jan),esc(p.sku),esc(p.name),num(p.qty),yen(p.sales),esc(p.stores.join("・"))])
@@ -145,10 +172,62 @@
       ]);
   }
 
+  function renderHistory(){
+    const range=C.dataRange(state.records);
+    const stores=C.aggregateBy(state.records,"store").sort((a,b)=>a.key.localeCompare(b.key));
+    $("historySummary").innerHTML=`
+      <div class="history-stat"><span>保存期間</span><strong>${range.from||"未保存"} ～ ${range.to||"未保存"}</strong></div>
+      <div class="history-stat"><span>保存日数</span><strong>${num(range.days)}日</strong></div>
+      <div class="history-stat"><span>保存行数</span><strong>${num(state.records.length)}行</strong></div>
+      <div class="history-stat"><span>店舗数</span><strong>${num(stores.length)}店舗</strong></div>
+    `;
+    $("syncLogTable").innerHTML=table(
+      [{label:"同期日時"},{label:"店舗"},{label:"対象期間"},{label:"取得行数",num:true}],
+      state.syncLog.map(log=>[
+        esc(new Date(log.syncedAt).toLocaleString("ja-JP")),
+        esc(log.store),
+        esc(`${log.from||"日付なし"} ～ ${log.to||"日付なし"}`),
+        num(log.rows)
+      ])
+    );
+  }
+
+  async function exportHistory(){
+    const payload={
+      format:"BMM-Web-History",
+      version:2,
+      exportedAt:new Date().toISOString(),
+      config:state.config,
+      records:await BMMDB.getAll(BMMDB.stores.records),
+      syncLog:await BMMDB.getSyncLog(),
+      lastSynced:state.lastSynced
+    };
+    const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=`BMM履歴バックアップ_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+
+  async function importHistory(file){
+    const payload=JSON.parse(await file.text());
+    if(payload?.format!=="BMM-Web-History"||!Array.isArray(payload.records)){
+      throw new Error("BMM Webの履歴バックアップではありません。");
+    }
+    if(!confirm(`保存履歴 ${payload.records.length}行を復元します。現在の履歴は置き換わります。よろしいですか？`)) return;
+    await BMMDB.importAll(payload);
+    await loadState();
+    renderAll();
+    alert("履歴を復元しました。");
+  }
+
   function updateStatus(message){
     if(message){$("syncStatus").textContent=message;return;}
-    const raw=localStorage.getItem(STORAGE.synced);
-    $("syncStatus").textContent=raw?`最終同期 ${new Date(raw).toLocaleString("ja-JP")}`:"未同期";
+    $("syncStatus").textContent=state.lastSynced
+      ? `最終同期 ${new Date(state.lastSynced).toLocaleString("ja-JP")}`
+      : "未同期";
   }
 
   async function fetchStore(store){
@@ -161,19 +240,68 @@
     return C.rowsToRecords(rows,state.config.mapping,store.name);
   }
 
-  async function syncAll(){
-    if(!state.config.stores.length){openSettings();return;}
-    $("refreshBtn").disabled=true;updateStatus("同期中…");
+  async function syncAll(options={}){
+    const silent=Boolean(options.silent);
+    if(!state.config.stores.length){
+      if(!silent) openSettings();
+      updateStatus("店舗設定が必要です");
+      return;
+    }
+
+    $("refreshBtn").disabled=true;
+    updateStatus(silent?"自動更新中…":"同期中…");
+
     try{
       const settled=await Promise.allSettled(state.config.stores.map(fetchStore));
-      const good=settled.filter(x=>x.status==="fulfilled").flatMap(x=>x.value);
-      const errors=settled.filter(x=>x.status==="rejected").map(x=>x.reason.message);
-      if(!good.length) throw new Error(errors.join("\n")||"データを取得できませんでした。");
-      state.records=good;state.filtered=[...good];saveState();renderAll();
-      updateStatus(errors.length?`一部失敗（${errors.length}店舗）`:`${good.length}行 同期完了`);
-      if(errors.length) alert(errors.join("\n"));
-    }catch(e){updateStatus("同期失敗");alert(e.message);}
-    finally{$("refreshBtn").disabled=false;}
+      const errors=[];
+      let totalRows=0;
+
+      for(let i=0;i<settled.length;i++){
+        const result=settled[i];
+        const store=state.config.stores[i];
+        if(result.status==="rejected"){
+          errors.push(result.reason.message);
+          continue;
+        }
+        const rows=result.value;
+        await BMMDB.replaceStoreDates(store.name,rows);
+        const range=C.dataRange(rows);
+        await BMMDB.addSyncLog({
+          syncedAt:new Date().toISOString(),
+          store:store.name,
+          from:range.from,
+          to:range.to,
+          rows:rows.length
+        });
+        totalRows+=rows.length;
+      }
+
+      if(!totalRows) throw new Error(errors.join("\n")||"データを取得できませんでした。");
+
+      const newest=await BMMDB.getAll(BMMDB.stores.records);
+      const reference=C.maxRecordDate(newest)||new Date().toISOString().slice(0,10);
+      const cutoff=C.cutoffDateForYears(reference,3);
+      const deleted=await BMMDB.pruneBefore(cutoff);
+
+      state.lastSynced=new Date().toISOString();
+      await BMMDB.setMeta("lastSynced",state.lastSynced);
+      await loadState();
+      renderAll();
+
+      updateStatus(
+        errors.length
+          ? `一部失敗（${errors.length}店舗）`
+          : `${totalRows}行更新${deleted?`・古い${deleted}行整理`:""}`
+      );
+
+      if(errors.length&&!silent) alert(errors.join("\n"));
+    }catch(e){
+      updateStatus("更新失敗");
+      if(!silent) alert(e.message);
+      else console.error(e);
+    }finally{
+      $("refreshBtn").disabled=false;
+    }
   }
 
   function addStoreRow(data={}){
@@ -205,7 +333,7 @@
     return {stores,mapping};
   }
 
-  function loadDemo(){
+  async function loadDemo(){
     const csv=`4570016338931,TG383BKWH,1,3990,東大阪店,2026/08/03,,ストレッチコロン ブラック×ホワイト
 4570016339273,KM146FBKG,1,2200,東大阪店,2026/08/03,,フィットネスサンダル ブラック
 4570016339242,KG098BLK,1,5500,名古屋店,2026/08/03,,フィットネスボクシンググローブ
@@ -214,8 +342,15 @@
 4570016375707,KG100108BL,1,11000,名古屋店,2026/08/05,,ボクシンググローブ
 4570016338107,MM091LBLK,1,990,東大阪店,2026/08/05,,ボクサーパンツ
 4570016338003,MM092XLBLK,1,990,江坂店,2026/08/05,,ボクサーパンツ`;
-    state.records=C.rowsToRecords(C.parseCSV(csv),defaultMapping,"デモ店");
-    state.filtered=[...state.records];saveState();renderAll();$("settingsDialog").close();
+    const demo=C.rowsToRecords(C.parseCSV(csv),defaultMapping,"デモ店");
+    for(const store of ["東大阪店","名古屋店","江坂店"]){
+      const rows=demo.filter(r=>r.store===store);
+      await BMMDB.replaceStoreDates(store,rows);
+    }
+    await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),store:"デモデータ",from:"2026-08-03",to:"2026-08-05",rows:demo.length});
+    state.lastSynced=new Date().toISOString();
+    await BMMDB.setMeta("lastSynced",state.lastSynced);
+    await loadState();renderAll();$("settingsDialog").close();
   }
 
   function bind(){
@@ -226,11 +361,18 @@
     $("productSearch").addEventListener("input",()=>renderProducts(C.aggregateProducts(state.filtered).sort((a,b)=>b.sales-a.sales)));
     $("rankingType").addEventListener("change",()=>renderRanking(C.aggregateProducts(state.filtered)));
     $("comparePeriodsBtn").addEventListener("click",comparePeriods);
+    $("exportHistoryBtn").addEventListener("click",exportHistory);
+    $("importHistoryInput").addEventListener("change",async e=>{
+      const file=e.target.files?.[0];
+      if(!file) return;
+      try{await importHistory(file);}catch(err){alert(err.message);}
+      e.target.value="";
+    });
     $("addStoreBtn").addEventListener("click",()=>addStoreRow());
     $("loadDemoBtn").addEventListener("click",loadDemo);
     $("saveSettingsBtn").addEventListener("click",async()=>{
       state.config=collectSettings();
-      localStorage.setItem(STORAGE.config,JSON.stringify(state.config));
+      await saveConfig();
       if(!state.config.stores.length){$("settingsMessage").textContent="店舗名とURLを入力してください。";return;}
       $("settingsDialog").close();await syncAll();
     });
@@ -240,6 +382,23 @@
     }));
   }
 
-  loadState();bind();renderAll();
-  if(!state.config.stores.length&&!state.records.length) openSettings();
+  async function start(){
+    await loadState();
+    bind();
+    renderAll();
+    if(!state.config.stores.length&&!state.records.length){
+      openSettings();
+      return;
+    }
+    if(state.config.stores.length){
+      await syncAll({silent:true});
+    }
+  }
+
+  start().catch(err=>{
+    console.error(err);
+    updateStatus("起動エラー");
+    alert(`BMM Webの起動に失敗しました。
+${err.message}`);
+  });
 })();

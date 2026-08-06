@@ -4,19 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="BODYMAKER BMM Web - 店舗売上・在庫分析">
-  <title>BMM Web</title>
+  <title>BMM Web v0.3</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
     <div>
       <span class="brand-kicker">BODYMAKER</span>
-      <h1>BMM Web</h1>
+      <h1>BMM Web <small class="version">v0.3</small></h1>
       <p>店舗売上・在庫分析</p>
     </div>
     <div class="top-actions">
-      <span id="syncStatus" class="status">未同期</span>
-      <button id="refreshBtn" class="btn btn-primary">全店舗を更新</button>
+      <span id="syncStatus" class="status">起動確認中…</span>
+      <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
       <button id="settingsBtn" class="btn">設定</button>
     </div>
   </header>
@@ -25,7 +25,7 @@
     <section class="notice" id="setupNotice">
       <strong>最初に設定が必要です。</strong>
       「設定」から店舗名とGoogleスプレッドシートURLを登録してください。
-      実データはGitHubへ保存されず、このブラウザ内にのみキャッシュされます。
+      実データはGitHubへ保存されず、この端末のブラウザ内に最大3年分保存されます。
     </section>
 
     <section class="filters card">
@@ -58,6 +58,7 @@
       <button class="tab" data-tab="abc">ABC分析</button>
       <button class="tab" data-tab="period">期間比較</button>
       <button class="tab" data-tab="stock">在庫</button>
+      <button class="tab" data-tab="history">保存履歴</button>
     </nav>
 
     <section id="dashboard" class="tab-panel active">
@@ -139,6 +140,30 @@
         <div id="stockTable"></div>
       </article>
     </section>
+
+    <section id="history" class="tab-panel">
+      <div class="grid-2">
+        <article class="card">
+          <h2>このブラウザに保存中のデータ</h2>
+          <div id="historySummary"></div>
+        </article>
+        <article class="card">
+          <h2>履歴の保護</h2>
+          <p class="muted">履歴はこの端末・このブラウザ内に最大3年分保存されます。BMMを開くと自動更新します。PC交換やブラウザ初期化に備えて、定期的にバックアップしてください。</p>
+          <div class="history-actions">
+            <button id="exportHistoryBtn" class="btn btn-primary">履歴をバックアップ</button>
+            <label class="btn file-btn">バックアップを復元
+              <input id="importHistoryInput" type="file" accept=".json,application/json" hidden>
+            </label>
+          </div>
+        </article>
+      </div>
+      <article class="card">
+        <h2>同期履歴</h2>
+        <div id="syncLogTable"></div>
+      </article>
+    </section>
+
   </main>
 
   <dialog id="settingsDialog">
@@ -190,6 +215,7 @@
   </template>
 
   <script src="core.js"></script>
+  <script src="db.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

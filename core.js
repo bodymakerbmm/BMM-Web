@@ -149,5 +149,86 @@
     return {a:ka,b:kb,delta:{sales:delta(ka.sales,kb.sales),qty:delta(ka.qty,kb.qty),productCount:delta(ka.productCount,kb.productCount),avgPrice:delta(ka.avgPrice,kb.avgPrice)}};
   }
 
-  return {colToIndex,parseCSV,parseNumber,parseDate,sheetUrlToCsv,rowsToRecords,filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods};
+
+  function normalizeText(value){
+    return String(value??"")
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/\s+/g," ")
+      .trim();
+  }
+
+  function matchesSearch(record,query){
+    const terms=normalizeText(query).split(" ").filter(Boolean);
+    if(!terms.length) return true;
+    const haystack=normalizeText([record.jan,record.sku,record.name].join(" "));
+    return terms.every(term=>haystack.includes(term));
+  }
+
+  function recordKey(record){
+    return [
+      normalizeText(record.store),
+      record.date||"",
+      normalizeText(record.jan),
+      normalizeText(record.sku),
+      normalizeText(record.shelf),
+      normalizeText(record.name)
+    ].join("|");
+  }
+
+  function mergeHistory(existing,incoming,configuredStore){
+    const store=String(configuredStore||incoming[0]?.store||"未設定");
+    const incomingDates=new Set(incoming.map(r=>r.date).filter(Boolean));
+    const incomingHasNoDate=incoming.some(r=>!r.date);
+
+    const preserved=existing.filter(r=>{
+      if(String(r.store)!==store) return true;
+      if(r.date && incomingDates.has(r.date)) return false;
+      if(!r.date && incomingHasNoDate) return false;
+      return true;
+    });
+
+    const latest=new Map();
+    for(const record of incoming){
+      latest.set(recordKey(record),record);
+    }
+    return [...preserved,...latest.values()].sort((a,b)=>
+      String(a.date||"").localeCompare(String(b.date||"")) ||
+      String(a.store||"").localeCompare(String(b.store||""))
+    );
+  }
+
+  function dataRange(records){
+    const dates=records.map(r=>r.date).filter(Boolean).sort();
+    return {
+      from:dates[0]||"",
+      to:dates[dates.length-1]||"",
+      days:new Set(dates).size
+    };
+  }
+
+  function cutoffDateForYears(referenceDate,years){
+    const ref = referenceDate ? new Date(`${referenceDate}T00:00:00`) : new Date();
+    if(Number.isNaN(ref.getTime())) throw new Error("基準日が不正です。");
+    const cutoff = new Date(ref);
+    cutoff.setFullYear(cutoff.getFullYear()-Number(years||3));
+    return cutoff.toISOString().slice(0,10);
+  }
+
+  function keepRecentYears(records,years=3,referenceDate){
+    const cutoff=cutoffDateForYears(referenceDate,years);
+    return records.filter(r=>!r.date||r.date>=cutoff);
+  }
+
+  function maxRecordDate(records){
+    const dates=records.map(r=>r.date).filter(Boolean).sort();
+    return dates[dates.length-1]||"";
+  }
+
+  return {
+    colToIndex,parseCSV,parseNumber,parseDate,sheetUrlToCsv,rowsToRecords,
+    filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods,
+    normalizeText,matchesSearch,recordKey,mergeHistory,dataRange,
+    cutoffDateForYears,keepRecentYears,maxRecordDate
+  };
 });
