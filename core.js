@@ -108,11 +108,11 @@
   }
 
   function detectSalesMapping(rows){
-    const headerRow=findHeaderRow(rows,[["jan","バーコード"],["売れ数","数量"],["売上","金額"],["日付"]]);
-
-    // BODYMAKER売上シートの標準配置。
-    // ヘッダーが見つからない場合に、JANを売上金額と誤判定しないため固定配置を使用する。
-    const fallback={
+    // BODYMAKER 売上シート実データ仕様（2026-08-08確認）
+    // 1行目からデータ。ヘッダーなし。
+    // A=JAN / B=品番 / C=数量 / D=売上金額 / E=店舗名 / F=日付 / G=未使用 / H=商品名
+    // 自動推測は行わず、JANコードを売上金額として読む事故を防止する。
+    return {
       headerRow:-1,
       jan:"A",
       sku:"B",
@@ -120,25 +120,8 @@
       sales:"D",
       store:"E",
       date:"F",
-      shelf:"G",
+      shelf:null,
       name:"H"
-    };
-    if(headerRow<0) return fallback;
-
-    const header=(rows[headerRow]||[]).map(normalizeText);
-    const find=(terms)=>header.findIndex(v=>terms.some(t=>v.includes(normalizeText(t))));
-    const col=(idx,fallbackCol)=>idx>=0?indexToCol(idx):fallbackCol;
-
-    return {
-      headerRow,
-      jan:col(find(["jan","バーコード"]),"A"),
-      sku:col(find(["品番","商品コード"]),"B"),
-      qty:col(find(["売れ数","数量","個数"]),"C"),
-      sales:col(find(["売上金額","売上","金額","価格"]),"D"),
-      store:col(find(["店舗名","店舗"]),"E"),
-      date:col(find(["日付","売上日"]),"F"),
-      shelf:col(find(["棚番号","棚"]),"G"),
-      name:col(find(["商品名","品名","名称"]),"H")
     };
   }
 
