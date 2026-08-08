@@ -11,7 +11,7 @@ const DEFAULT_STORES=[
   {name:"ららぽーと堺店",url:"https://docs.google.com/spreadsheets/d/1fb5XVcmwpqi-MOFifStk39Rr5fUzU0b7/edit?gid=465268523#gid=465268523",excludedShelves:""},
   {name:"江坂店",url:"https://docs.google.com/spreadsheets/d/1LSpa6rt6c9ZOEzT5oRVDElYqNcULDKSK/edit?gid=465268523#gid=465268523",excludedShelves:""}
 ];
-let state={config:{stores:[...DEFAULT_STORES],commonMasterUrl:""},records:[],filtered:[],shelfRows:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
+let state={config:{stores:[...DEFAULT_STORES],commonMasterUrl:""},records:[],filtered:[],shelfRows:[],shelfHistory:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
 
 function table(headers,rows){
   if(!rows.length)return '<div class="empty">表示できるデータがありません。</div>';
@@ -65,6 +65,7 @@ async function loadState(){
   }
   state.records=await BMMDB.getAll(BMMDB.stores.records);
   state.shelfRows=await BMMDB.getAll(BMMDB.stores.shelf);
+  state.shelfHistory=await BMMDB.getAll(BMMDB.stores.shelfHistory);
   state.stockRows=await BMMDB.getAll(BMMDB.stores.stock);
   state.masterRows=await BMMDB.getAll(BMMDB.stores.master);
   state.syncLog=await BMMDB.getSyncLog();
@@ -113,6 +114,23 @@ function renderStores(stores){
   $("storeCompareTable").innerHTML=table([{label:"店舗"},{label:"売上",num:true},{label:"売れ数",num:true},{label:"商品種類",num:true},{label:"平均単価",num:true}],
     stores.map(s=>[esc(s.key),yen(s.sales),num(s.qty),num(s.productCount),yen(s.qty?s.sales/s.qty:0)]));
 }
+function activeShelfRowsForSales(storeName,salesRecords){
+  const history=state.shelfHistory.filter(r=>r.store===storeName);
+  if(!history.length)return state.shelfRows.filter(r=>r.store===storeName);
+  const snapshots=[...new Set(history.map(r=>r.effectiveFrom).filter(Boolean))].sort();
+  const picked=[];const seen=new Set();
+  for(const sale of salesRecords){
+    let eff="";
+    for(const d of snapshots){if(d<=sale.date)eff=d;else break;}
+    if(!eff&&snapshots.length)eff=snapshots[0];
+    for(const r of history.filter(x=>x.effectiveFrom===eff)){
+      const k=[eff,r.jan,r.shelf].join("|");
+      if(!seen.has(k)){seen.add(k);picked.push(r);}
+    }
+  }
+  return picked;
+}
+
 function renderShelves(sales){
   const filter={store:$("storeFilter").value,from:$("dateFrom").value,to:$("dateTo").value};
   const shelf=state.shelfRows.filter(r=>(!filter.store||r.store===filter.store));
@@ -161,7 +179,7 @@ function renderStock(){
 function renderHistory(){
   const sr=C.dataRange(state.records),sh=C.dataRange(state.shelfRows),stockDates=[...new Set(state.stockRows.map(r=>r.snapshotDate))].filter(Boolean).sort();
   $("historySummary").innerHTML=[
-    ["売上保存期間",`${sr.from||"未保存"} ～ ${sr.to||"未保存"}`],["売上行数",num(state.records.length)],["棚データ行数",num(state.shelfRows.length)],
+    ["売上保存期間",`${sr.from||"未保存"} ～ ${sr.to||"未保存"}`],["売上行数",num(state.records.length)],["最新棚データ行数",num(state.shelfRows.length)],["棚履歴行数",num(state.shelfHistory.length)],
     ["在庫保存期間",stockDates.length?`${stockDates[0]} ～ ${stockDates.at(-1)}`:"未保存"],["在庫行数",num(state.stockRows.length)],["商品マスタ",`${num(state.masterRows.length)}件`]
   ].map(x=>`<div class="history-stat"><span>${x[0]}</span><strong>${x[1]}</strong></div>`).join("");
   $("syncLogTable").innerHTML=table([{label:"日時"},{label:"種別"},{label:"対象"},{label:"件数",num:true}],state.syncLog.map(l=>[esc(new Date(l.syncedAt).toLocaleString("ja-JP")),esc(l.type||"売上"),esc(l.store||l.target||""),num(l.rows||0)]));
@@ -305,9 +323,16 @@ function openImport(){
   $("shelfImportMessage").textContent="";$("stockImportMessage").textContent="";$("importDataDialog").showModal();
 }
 async function importShelf(){
-  const f=$("shelfFileInput").files[0],store=$("shelfStoreSelect").value;if(!f||!store){$("shelfImportMessage").textContent="店舗とTXTファイルを指定してください。";return;}
-  try{const rows=C.parseShelfText(await readTextSmart(f),store);if(!rows.length)throw new Error("棚データを判定できません。");
-    await BMMDB.replaceShelfDates(store,rows);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"棚データ",store,rows:rows.length});await loadState();renderAll();$("shelfImportMessage").textContent=`${rows.length}行取り込みました。`;
+  const f=$("shelfFileInput").files[0],store=$("shelfStoreSelect").value,effectiveFrom=$("shelfEffectiveDate").value;
+  if(!f||!store||!effectiveFrom){$("shelfImportMessage").textContent="店舗・有効開始日・TXTファイルを指定してください。";return;}
+  try{
+    const rows=C.parseShelfText(await readTextSmart(f),store);
+    if(!rows.length)throw new Error("棚データを判定できません。");
+    await BMMDB.replaceShelfDates(store,rows);
+    await BMMDB.replaceShelfSnapshot(store,effectiveFrom,rows);
+    await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"棚データ",store,target:`有効開始 ${effectiveFrom}`,rows:rows.length});
+    await loadState();renderAll();
+    $("shelfImportMessage").textContent=`${effectiveFrom}以降の棚配置として ${rows.length}行保存しました。`;
   }catch(e){$("shelfImportMessage").textContent=e.message;}
 }
 async function importStock(){

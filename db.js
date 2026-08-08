@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const DB_NAME="bmm-web-db", DB_VERSION=4;
-  const RECORDS="records", META="meta", SYNC_LOG="syncLog", SHELF="shelfRows", STOCK="stockRows", MASTER="masterRows";
+  const RECORDS="records", META="meta", SYNC_LOG="syncLog", SHELF="shelfRows", STOCK="stockRows", MASTER="masterRows", SHELF_HISTORY="shelfHistory";
 
   function openDB(){
     return new Promise((resolve,reject)=>{
@@ -82,6 +82,29 @@
     }finally{db.close();}
   }
 
+  async function replaceShelfSnapshot(storeName,effectiveFrom,rows){
+    const db=await openDB();
+    try{
+      const tx=db.transaction(SHELF_HISTORY,"readwrite"),st=tx.objectStore(SHELF_HISTORY);
+      const req=st.openCursor();
+      await new Promise((resolve,reject)=>{
+        req.onerror=()=>reject(req.error);
+        req.onsuccess=()=>{
+          const c=req.result;
+          if(!c){resolve();return;}
+          const v=c.value||{};
+          if(v.store===storeName&&v.effectiveFrom===effectiveFrom)c.delete();
+          c.continue();
+        };
+      });
+      for(const r of rows){
+        const id=[storeName,effectiveFrom,window.BMMCore.normalizeText(r.jan),String(r.shelf)].join("|");
+        st.put({...r,store:storeName,effectiveFrom,_id:id});
+      }
+      await txDone(tx);
+    }finally{db.close();}
+  }
+
   async function replaceStockSnapshot(snapshotDate,rows){
     if(!snapshotDate)return;
     const db=await openDB();
@@ -114,15 +137,26 @@
   async function addSyncLog(entry){const db=await openDB();try{const tx=db.transaction(SYNC_LOG,"readwrite");tx.objectStore(SYNC_LOG).add(entry);await txDone(tx);}finally{db.close();}}
   async function getSyncLog(limit=200){return (await getAll(SYNC_LOG)).sort((a,b)=>String(b.syncedAt).localeCompare(String(a.syncedAt))).slice(0,limit);}
 
-  async function exportAll(){return {records:await getAll(RECORDS),shelfRows:await getAll(SHELF),stockRows:await getAll(STOCK),masterRows:await getAll(MASTER),syncLog:await getSyncLog(),config:await getMeta("config"),lastSynced:await getMeta("lastSynced"),salesSchemaVersion:await getMeta("salesSchemaVersion")};}
+  async function exportAll(){return {records:await getAll(RECORDS),shelfRows:await getAll(SHELF),shelfHistory:await getAll(SHELF_HISTORY),stockRows:await getAll(STOCK),masterRows:await getAll(MASTER),syncLog:await getSyncLog(),config:await getMeta("config"),lastSynced:await getMeta("lastSynced"),salesSchemaVersion:await getMeta("salesSchemaVersion")};}
   async function importAll(p){
     for(const s of [RECORDS,SHELF,STOCK,MASTER,SYNC_LOG])await clearStore(s);
     const groups=new Map();for(const r of p.records||[]){const k=r.store||"未設定";if(!groups.has(k))groups.set(k,[]);groups.get(k).push(r);}for(const [k,v] of groups)await replaceStoreRange(k,v);
     const sg=new Map();for(const r of p.shelfRows||[]){const k=r.store||"未設定";if(!sg.has(k))sg.set(k,[]);sg.get(k).push(r);}for(const [k,v] of sg)await replaceShelfDates(k,v);
+    const hist=new Map();
+    for(const r of p.shelfHistory||[]){
+      const k=[r.store||"未設定",r.effectiveFrom||""].join("|");
+      if(!hist.has(k))hist.set(k,[]);
+      hist.get(k).push(r);
+    }
+    for(const [k,v] of hist){
+      const [store,effectiveFrom]=k.split("|");
+      await replaceShelfSnapshot(store,effectiveFrom,v);
+    }
+
     const snaps=new Map();for(const r of p.stockRows||[]){const k=r.snapshotDate;if(!snaps.has(k))snaps.set(k,[]);snaps.get(k).push(r);}for(const [k,v] of snaps)await replaceStockSnapshot(k,v);
     if(p.masterRows?.length)await replaceMaster(p.masterRows);for(const l of p.syncLog||[])await addSyncLog(l);if(p.config)await setMeta("config",p.config);if(p.lastSynced)await setMeta("lastSynced",p.lastSynced);
   }
 
   window.BMMDB={openDB,getAll,clearStore,replaceStoreRange,replaceShelfDates,replaceStockSnapshot,replaceMaster,pruneBefore,cleanInvalidSalesRecords,resetSalesForSchemaMigration,setMeta,getMeta,addSyncLog,getSyncLog,exportAll,importAll,
-    stores:{records:RECORDS,meta:META,syncLog:SYNC_LOG,shelf:SHELF,stock:STOCK,master:MASTER}};
+    stores:{records:RECORDS,meta:META,syncLog:SYNC_LOG,shelf:SHELF,shelfHistory:SHELF_HISTORY,stock:STOCK,master:MASTER}};
 })();

@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="BODYMAKER BMM Web - 店舗売上・棚・在庫分析">
-<title>BMM Web Version 2.2.0</title>
+<title>BMM Web Version 2.2.1</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
-  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 2.2.0</small></h1><p>店舗売上・棚・在庫分析</p></div>
+  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 2.2.1</small></h1><p>店舗売上・棚・在庫分析</p></div>
   <div class="top-actions">
     <span id="syncStatus" class="status">起動確認中…</span>
     <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
@@ -55,7 +55,7 @@
 <section id="shelves" class="tab-panel">
 <article class="card">
 <h2>棚別分析</h2>
-<p class="muted">「データ1」形式のテキストからJANコードと棚番号を照合し、売上の高い棚から順に表示します。商品名・品番は共通商品マスタのJAN一致から取得します。除外棚は店舗ごとの設定内容を使用します。</p>
+<p class="muted">棚データは変更時だけ取り込み、有効開始日付きで履歴保存します。売上日ごとに、その時点で有効だった棚配置を使って分析します。JANコードと棚番号を照合し、売上の高い棚から順に表示します。商品名・品番は共通商品マスタのJAN一致から取得します。除外棚は店舗ごとの設定内容を使用します。</p>
 <div id="shelfCoverage"></div><div id="shelfTable"></div>
 </article></section>
 
@@ -87,7 +87,7 @@
 
 <dialog id="commonDataDialog"><form method="dialog" class="dialog-card">
 <div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>共通商品マスタ</h2></div><button value="cancel" class="icon-btn">×</button></div>
-<p class="muted">商品マスタは全店舗共通です。商品名はJANコード完全一致でこのマスタから取得し、売上シートのH列は使用しません。GoogleスプレッドシートURL、またはCSV / Excelファイルのどちらかで登録できます。ローカルファイルはこの端末内だけで処理され、外部へ送信しません。</p>
+<p class="muted">商品マスタは全店舗共通です。最初に1回取り込み、商品追加・名称変更・価格変更があった時だけ再取り込みしてください。商品名はJANコード完全一致でこのマスタから取得し、売上シートのH列は使用しません。GoogleスプレッドシートURL、またはCSV / Excelファイルのどちらかで登録できます。ローカルファイルはこの端末内だけで処理され、外部へ送信しません。</p>
 <div class="common-data-grid"><label>商品マスタGoogleタブURL<input id="commonMasterUrl" placeholder="任意：GoogleスプレッドシートURL"></label>
 <label class="file-drop">商品マスタファイル（CSV / XLSX）<input id="masterFileInput" type="file" accept=".csv,.xlsx,.xls"></label></div>
 <div class="dialog-actions"><button id="saveCommonMasterUrlBtn" type="button" class="btn">URLを保存</button><button id="importMasterFileBtn" type="button" class="btn btn-primary">ファイルを取り込む</button></div>
@@ -97,7 +97,7 @@
 <dialog id="importDataDialog"><form method="dialog" class="dialog-card">
 <div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>棚・在庫データ取込</h2></div><button value="cancel" class="icon-btn">×</button></div>
 <div class="import-grid">
-<article class="import-box"><h3>① 棚データ（データ1 TXT）</h3><label>対象店舗<select id="shelfStoreSelect"></select></label><label>TXT / CSV<input id="shelfFileInput" type="file" accept=".txt,.csv"></label><button id="importShelfBtn" type="button" class="btn btn-primary">棚データを取り込む</button><div id="shelfImportMessage" class="message"></div></article>
+<article class="import-box"><h3>① 棚データ（データ1 TXT）</h3><label>対象店舗<select id="shelfStoreSelect"></select></label><label>有効開始日<input id="shelfEffectiveDate" type="date"></label><label>TXT / CSV<input id="shelfFileInput" type="file" accept=".txt,.csv"></label><button id="importShelfBtn" type="button" class="btn btn-primary">棚データを取り込む</button><div id="shelfImportMessage" class="message"></div></article>
 <article class="import-box"><h3>② 週次在庫（Excel）</h3><label>在庫基準日<input id="stockSnapshotDate" type="date"></label><label>全店舗在庫Excel<input id="stockFileInput" type="file" accept=".xlsx,.xls"></label><button id="importStockBtn" type="button" class="btn btn-primary">在庫Excelを取り込む</button><div id="stockImportMessage" class="message"></div></article>
 </div></form></dialog>
 
