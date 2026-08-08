@@ -178,7 +178,7 @@ async function masterIndex(){
 }
 async function fetchStore(store,midx){
   const rows=await fetchCsvRows(store.url,`${store.name} 売上`),m=C.detectSalesMapping(rows),v=C.validateSalesRecords(C.rowsToRecords(rows,m,store.name));
-  if(!v.ok)throw new Error(`${store.name}: 売上タブを判定できません。`);return C.enrichWithMaster(v.valid,midx);
+  if(!v.ok)throw new Error(`${store.name}: 売上データの列を正しく判定できません。標準配置 A=JAN / B=品番 / C=数量 / D=売上 / E=店舗 / F=日付 を確認してください。`);return C.enrichWithMaster(v.valid,midx);
 }
 async function syncAll(options={}){
   if(!state.config.stores.length){if(!options.silent)$("settingsDialog").showModal();updateStatus("店舗設定が必要です");return;}

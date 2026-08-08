@@ -109,31 +109,36 @@
 
   function detectSalesMapping(rows){
     const headerRow=findHeaderRow(rows,[["jan","バーコード"],["売れ数","数量"],["売上","金額"],["日付"]]);
-    const data=headerRow>=0?rows.slice(headerRow+1):rows;
-    const width=Math.max(0,...rows.map(r=>r.length));
-    const header=headerRow>=0?(rows[headerRow]||[]).map(normalizeText):[];
-    const find=(terms)=>header.findIndex(v=>terms.some(t=>v.includes(normalizeText(t))));
-    const choose=(headerIdx,scoreFn,fallback)=>{
-      if(headerIdx>=0) return headerIdx;
-      let best={i:fallback,s:-1};
-      for(let i=0;i<width;i++){
-        const s=scoreFn(i);
-        if(s>best.s) best={i,s};
-      }
-      return best.s>=0.45?best.i:fallback;
+
+    // BODYMAKER売上シートの標準配置。
+    // ヘッダーが見つからない場合に、JANを売上金額と誤判定しないため固定配置を使用する。
+    const fallback={
+      headerRow:-1,
+      jan:"A",
+      sku:"B",
+      qty:"C",
+      sales:"D",
+      store:"E",
+      date:"F",
+      shelf:"G",
+      name:"H"
     };
-    const jan=choose(find(["jan","バーコード"]),i=>cellScore(data,i,v=>/^\d{8,14}$/.test(String(v).replace(/\D/g,""))),0);
-    const sku=choose(find(["品番","商品コード"]),i=>cellScore(data,i,v=>/[A-Za-z]/.test(String(v))&&String(v).length<=40),1);
-    const qty=choose(find(["売れ数","数量","個数"]),i=>cellScore(data,i,v=>Math.abs(parseNumber(v))<=9999),2);
-    const sales=choose(find(["売上金額","売上","金額"]),i=>cellScore(data,i,v=>parseNumber(v)!==0),3);
-    const store=choose(find(["店舗名","店舗"]),i=>cellScore(data,i,v=>/店|東大阪|名古屋|江坂|堺/.test(String(v))),4);
-    const date=choose(find(["日付","売上日"]),i=>cellScore(data,i,v=>Boolean(parseDate(v))),5);
-    const shelf=find(["棚番号","棚"]);
-    const name=find(["商品名","品名","名称"]);
+    if(headerRow<0) return fallback;
+
+    const header=(rows[headerRow]||[]).map(normalizeText);
+    const find=(terms)=>header.findIndex(v=>terms.some(t=>v.includes(normalizeText(t))));
+    const col=(idx,fallbackCol)=>idx>=0?indexToCol(idx):fallbackCol;
+
     return {
       headerRow,
-      jan:indexToCol(jan),sku:indexToCol(sku),qty:indexToCol(qty),sales:indexToCol(sales),
-      store:indexToCol(store),date:indexToCol(date),shelf:indexToCol(shelf),name:indexToCol(name)
+      jan:col(find(["jan","バーコード"]),"A"),
+      sku:col(find(["品番","商品コード"]),"B"),
+      qty:col(find(["売れ数","数量","個数"]),"C"),
+      sales:col(find(["売上金額","売上","金額","価格"]),"D"),
+      store:col(find(["店舗名","店舗"]),"E"),
+      date:col(find(["日付","売上日"]),"F"),
+      shelf:col(find(["棚番号","棚"]),"G"),
+      name:col(find(["商品名","品名","名称"]),"H")
     };
   }
 
@@ -160,8 +165,17 @@
     }).filter(r=>r.jan||r.sku||r.sales||r.qty);
   }
 
+  function isPlausibleSalesRecord(r){
+    if(!r.date || !(r.jan||r.sku)) return false;
+    if(!Number.isFinite(r.qty)||!Number.isFinite(r.sales)) return false;
+    if(Math.abs(r.qty)>100000) return false;
+    // 1行の売上が10億円を超える場合は列誤判定の可能性が極めて高い。
+    if(Math.abs(r.sales)>1000000000) return false;
+    return true;
+  }
+
   function validateSalesRecords(records){
-    const valid=records.filter(r=>r.date&&(r.jan||r.sku)&&Number.isFinite(r.qty)&&Number.isFinite(r.sales));
+    const valid=records.filter(isPlausibleSalesRecord);
     return {ok:valid.length>0,valid};
   }
 
@@ -403,7 +417,7 @@
 
   return {
     EXCLUDED_SHELVES,normalizeText,parseNumber,parseDate,parseCSV,colToIndex,indexToCol,
-    sheetUrlToCsv,detectSalesMapping,rowsToRecords,validateSalesRecords,productKey,recordKey,
+    sheetUrlToCsv,detectSalesMapping,rowsToRecords,isPlausibleSalesRecord,validateSalesRecords,productKey,recordKey,
     filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods,matchesSearch,
     dataRange,cutoffDateForYears,maxRecordDate,parseShelfText,shelfRowKey,parseExcludedShelves,allocateShelfSales,
     detectMasterLayout,masterRowsToRecords,buildMasterIndex,enrichWithMaster,inferDateFromFilename,
