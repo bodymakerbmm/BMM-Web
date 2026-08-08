@@ -1,249 +1,108 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="BODYMAKER BMM Web - 店舗売上・在庫分析">
-  <title>BMM Web v0.3.2</title>
-  <link rel="stylesheet" href="styles.css">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="BODYMAKER BMM Web - 店舗売上・棚・在庫分析">
+<title>BMM Web Version 2.0.0</title>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <span class="brand-kicker">BODYMAKER</span>
-      <h1>BMM Web <small class="version">v0.3.2</small></h1>
-      <p>店舗売上・在庫分析</p>
-    </div>
-    <div class="top-actions">
-      <span id="syncStatus" class="status">起動確認中…</span>
-      <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
-      <button id="commonDataBtn" class="btn">共通商品マスタ</button>
-      <button id="settingsBtn" class="btn">店舗設定</button>
-    </div>
-  </header>
+<header class="topbar">
+  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 1.0.0</small></h1><p>店舗売上・棚・在庫分析</p></div>
+  <div class="top-actions">
+    <span id="syncStatus" class="status">起動確認中…</span>
+    <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
+    <button id="importDataBtn" class="btn">棚・在庫データ</button>
+    <button id="commonDataBtn" class="btn">共通商品マスタ</button>
+    <button id="settingsBtn" class="btn">店舗設定</button>
+  </div>
+</header>
 
-  <main class="container">
-    <section class="notice" id="setupNotice">
-      <strong>最初に設定が必要です。</strong>
-      「設定」から店舗名と、売上タブを開いた状態のGoogleスプレッドシートURLを登録してください。
-      実データはGitHubへ保存されず、この端末のブラウザ内に最大3年分保存されます。
-    </section>
+<main class="container">
+<section class="notice" id="setupNotice"><strong>最初に店舗設定が必要です。</strong> 売上Googleスプレッドシートを登録してください。売上・棚・在庫の実データはGitHubへ保存されず、この端末のブラウザ内に最大3年分保存されます。</section>
 
-    <section class="filters card">
-      <label>店舗
-        <select id="storeFilter"><option value="">全店舗</option></select>
-      </label>
-      <label>開始日
-        <input id="dateFrom" type="date">
-      </label>
-      <label>終了日
-        <input id="dateTo" type="date">
-      </label>
-      <button id="applyFilterBtn" class="btn btn-primary">表示更新</button>
-      <button id="clearFilterBtn" class="btn">期間を解除</button>
-    </section>
+<section class="filters card">
+<label>店舗<select id="storeFilter"><option value="">全店舗</option></select></label>
+<label>開始日<input id="dateFrom" type="date"></label><label>終了日<input id="dateTo" type="date"></label>
+<button id="applyFilterBtn" class="btn btn-primary">表示更新</button><button id="clearFilterBtn" class="btn">期間を解除</button>
+</section>
 
-    <section class="kpis">
-      <article class="card kpi"><span>売上</span><strong id="totalSales">¥0</strong></article>
-      <article class="card kpi"><span>売れ数</span><strong id="totalQty">0</strong></article>
-      <article class="card kpi"><span>商品種類</span><strong id="productCount">0</strong></article>
-      <article class="card kpi"><span>平均単価</span><strong id="avgPrice">¥0</strong></article>
-    </section>
+<section class="kpis">
+<article class="card kpi"><span>売上</span><strong id="totalSales">¥0</strong></article>
+<article class="card kpi"><span>売れ数</span><strong id="totalQty">0</strong></article>
+<article class="card kpi"><span>商品種類</span><strong id="productCount">0</strong></article>
+<article class="card kpi"><span>平均単価</span><strong id="avgPrice">¥0</strong></article>
+</section>
 
-    <nav class="tabs" aria-label="分析画面">
-      <button class="tab active" data-tab="dashboard">ダッシュボード</button>
-      <button class="tab" data-tab="products">商品検索</button>
-      <button class="tab" data-tab="ranking">ランキング</button>
-      <button class="tab" data-tab="stores">店舗比較</button>
-      <button class="tab" data-tab="shelves">棚別分析</button>
-      <button class="tab" data-tab="abc">ABC分析</button>
-      <button class="tab" data-tab="period">期間比較</button>
-      <button class="tab" data-tab="stock">在庫</button>
-      <button class="tab" data-tab="history">保存履歴</button>
-    </nav>
+<nav class="tabs">
+<button class="tab active" data-tab="dashboard">ダッシュボード</button><button class="tab" data-tab="products">商品検索</button>
+<button class="tab" data-tab="ranking">ランキング</button><button class="tab" data-tab="stores">店舗比較</button>
+<button class="tab" data-tab="shelves">棚別分析</button><button class="tab" data-tab="abc">ABC分析</button>
+<button class="tab" data-tab="period">期間比較</button><button class="tab" data-tab="stock">在庫</button><button class="tab" data-tab="history">保存履歴</button>
+</nav>
 
-    <section id="dashboard" class="tab-panel active">
-      <div class="grid-2">
-        <article class="card">
-          <h2>売上上位商品</h2>
-          <div id="topProducts"></div>
-        </article>
-        <article class="card">
-          <h2>店舗別売上</h2>
-          <div id="storeSummary"></div>
-        </article>
-      </div>
-      <article class="card">
-        <h2>日別推移</h2>
-        <div id="dailyTrend" class="bar-chart"></div>
-      </article>
-    </section>
+<section id="dashboard" class="tab-panel active">
+<div class="grid-2"><article class="card"><h2>売上上位商品</h2><div id="topProducts"></div></article><article class="card"><h2>店舗別売上</h2><div id="storeSummary"></div></article></div>
+<article class="card"><h2>日別推移</h2><div id="dailyTrend" class="bar-chart"></div></article>
+</section>
 
-    <section id="products" class="tab-panel">
-      <article class="card">
-        <h2>商品検索</h2>
-        <input id="productSearch" class="search" placeholder="JAN・品番・商品名で検索">
-        <div id="productTable"></div>
-      </article>
-    </section>
+<section id="products" class="tab-panel"><article class="card"><h2>商品検索</h2><input id="productSearch" class="search" placeholder="JAN・品番・商品名の一部で検索（複数語OK）"><div id="productTable"></div></article></section>
 
-    <section id="ranking" class="tab-panel">
-      <article class="card">
-        <h2>売れ数・売上ランキング</h2>
-        <label>並び順
-          <select id="rankingType">
-            <option value="sales">売上金額</option>
-            <option value="qty">売れ数</option>
-          </select>
-        </label>
-        <div id="rankingTable"></div>
-      </article>
-    </section>
+<section id="ranking" class="tab-panel"><article class="card"><h2>売れ数・売上ランキング</h2><label>並び順 <select id="rankingType"><option value="sales">売上金額</option><option value="qty">売れ数</option></select></label><div id="rankingTable"></div></article></section>
 
-    <section id="stores" class="tab-panel">
-      <article class="card"><h2>店舗比較</h2><div id="storeCompareTable"></div></article>
-    </section>
+<section id="stores" class="tab-panel"><article class="card"><h2>店舗比較</h2><div id="storeCompareTable"></div></article></section>
 
-    <section id="shelves" class="tab-panel">
-      <article class="card">
-        <h2>棚別分析</h2>
-        <p class="muted">棚番号列があるデータで表示します。列がない場合は「未設定」と表示されます。</p>
-        <div id="shelfTable"></div>
-      </article>
-    </section>
+<section id="shelves" class="tab-panel">
+<article class="card">
+<h2>棚別分析</h2>
+<p class="muted">「データ1」形式のテキストを取り込むと、JAN・日付・店舗を売上と照合して棚別売上を算出します。除外棚は店舗ごとの設定内容を使用します。</p>
+<div id="shelfCoverage"></div><div id="shelfTable"></div>
+</article></section>
 
-    <section id="abc" class="tab-panel">
-      <article class="card">
-        <h2>ABC分析</h2>
-        <p class="muted">売上構成比の累計70%までをA、90%までをB、それ以外をCとして分類します。</p>
-        <div id="abcTable"></div>
-      </article>
-    </section>
+<section id="abc" class="tab-panel"><article class="card"><h2>ABC分析</h2><p class="muted">売上構成比の累計70%までA、90%までB、それ以外C。</p><div id="abcTable"></div></article></section>
 
-    <section id="period" class="tab-panel">
-      <article class="card">
-        <h2>期間比較</h2>
-        <div class="filters compact">
-          <label>比較期間A 開始<input id="periodAFrom" type="date"></label>
-          <label>終了<input id="periodATo" type="date"></label>
-          <label>比較期間B 開始<input id="periodBFrom" type="date"></label>
-          <label>終了<input id="periodBTo" type="date"></label>
-          <button id="comparePeriodsBtn" class="btn btn-primary">比較</button>
-        </div>
-        <div id="periodCompare"></div>
-      </article>
-    </section>
+<section id="period" class="tab-panel"><article class="card"><h2>期間比較</h2><div class="filters compact">
+<label>期間A 開始<input id="periodAFrom" type="date"></label><label>終了<input id="periodATo" type="date"></label>
+<label>期間B 開始<input id="periodBFrom" type="date"></label><label>終了<input id="periodBTo" type="date"></label>
+<button id="comparePeriodsBtn" class="btn btn-primary">比較</button></div><div id="periodCompare"></div></article></section>
 
-    <section id="stock" class="tab-panel">
-      <article class="card">
-        <h2>在庫</h2>
-        <p class="muted">在庫列があるシートを登録すると表示します。現時点の売上シートだけでも他機能は利用できます。</p>
-        <div id="stockTable"></div>
-      </article>
-    </section>
+<section id="stock" class="tab-panel"><article class="card"><h2>在庫分析</h2>
+<div class="stock-toolbar"><label>在庫基準日<select id="stockSnapshotSelect"></select></label><span id="stockSnapshotInfo" class="muted"></span></div>
+<p class="muted">月曜朝（日曜営業終了時点）の全店舗在庫Excelを取り込んだ基準在庫です。店舗列は増減しても自動判定します。</p>
+<div id="stockTable"></div></article></section>
 
-    <section id="history" class="tab-panel">
-      <div class="grid-2">
-        <article class="card">
-          <h2>このブラウザに保存中のデータ</h2>
-          <div id="historySummary"></div>
-        </article>
-        <article class="card">
-          <h2>履歴の保護</h2>
-          <p class="muted">履歴はこの端末・このブラウザ内に最大3年分保存されます。BMMを開くと自動更新します。PC交換やブラウザ初期化に備えて、定期的にバックアップしてください。</p>
-          <div class="history-actions">
-            <button id="exportHistoryBtn" class="btn btn-primary">履歴をバックアップ</button>
-            <label class="btn file-btn">バックアップを復元
-              <input id="importHistoryInput" type="file" accept=".json,application/json" hidden>
-            </label>
-          </div>
-        </article>
-      </div>
-      <article class="card">
-        <h2>同期履歴</h2>
-        <div id="syncLogTable"></div>
-      </article>
-    </section>
+<section id="history" class="tab-panel"><div class="grid-2">
+<article class="card"><h2>保存データ</h2><div id="historySummary"></div></article>
+<article class="card"><h2>履歴の保護</h2><p class="muted">この端末に最大3年保存。PC交換・ブラウザ初期化に備えてバックアップしてください。</p>
+<div class="history-actions"><button id="exportHistoryBtn" class="btn btn-primary">全データをバックアップ</button><label class="btn file-btn">バックアップを復元<input id="importHistoryInput" type="file" accept=".json" hidden></label></div></article>
+</div><article class="card"><h2>同期・取込履歴</h2><div id="syncLogTable"></div></article></section>
+</main>
 
-  </main>
+<dialog id="settingsDialog"><form method="dialog" class="dialog-card">
+<div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>店舗データ設定</h2></div><button value="cancel" class="icon-btn">×</button></div>
+<p class="muted">各店舗の売上タブURLと、その店舗で集計対象から外す棚番号を登録します。除外棚は「1,2,3」のようにカンマ区切りで入力してください。棚番号が変わった場合はここを書き換えるだけで対応できます。</p>
+<div id="storeRows"></div><button id="addStoreBtn" type="button" class="btn">＋ 店舗を追加</button>
+<div class="dialog-actions"><button id="saveSettingsBtn" type="button" class="btn btn-primary">保存して同期</button></div><div id="settingsMessage" class="message"></div>
+</form></dialog>
 
-  <dialog id="settingsDialog">
-    <form method="dialog" class="dialog-card" id="settingsForm">
-      <div class="dialog-head">
-        <div><span class="brand-kicker">BMM WEB</span><h2>店舗データ設定</h2></div>
-        <button value="cancel" class="icon-btn" aria-label="閉じる">×</button>
-      </div>
+<dialog id="commonDataDialog"><form method="dialog" class="dialog-card">
+<div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>共通商品マスタ</h2></div><button value="cancel" class="icon-btn">×</button></div>
+<p class="muted">商品マスタは全店舗共通です。GoogleスプレッドシートURL、またはCSV / Excelファイルのどちらかで登録できます。ローカルファイルはこの端末内だけで処理され、外部へ送信しません。</p>
+<div class="common-data-grid"><label>商品マスタGoogleタブURL<input id="commonMasterUrl" placeholder="任意：GoogleスプレッドシートURL"></label>
+<label class="file-drop">商品マスタファイル（CSV / XLSX）<input id="masterFileInput" type="file" accept=".csv,.xlsx,.xls"></label></div>
+<div class="dialog-actions"><button id="saveCommonMasterUrlBtn" type="button" class="btn">URLを保存</button><button id="importMasterFileBtn" type="button" class="btn btn-primary">ファイルを取り込む</button></div>
+<div id="commonDataMessage" class="message"></div>
+</form></dialog>
 
-      <p class="muted">
-        Googleスプレッドシートの共有設定は「リンクを知っている全員・閲覧者」にしてください。<br>
-        <strong>各店舗の売上タブを開いてから、そのURLを貼り付けます。</strong> タブ名は店舗ごとに違っていても問題ありません。<br>
-        商品マスタは店舗ごとに登録せず、画面右上の「共通商品マスタ」から1回だけ登録します。
-      </p>
+<dialog id="importDataDialog"><form method="dialog" class="dialog-card">
+<div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>棚・在庫データ取込</h2></div><button value="cancel" class="icon-btn">×</button></div>
+<div class="import-grid">
+<article class="import-box"><h3>① 棚データ（データ1 TXT）</h3><label>対象店舗<select id="shelfStoreSelect"></select></label><label>TXT / CSV<input id="shelfFileInput" type="file" accept=".txt,.csv"></label><button id="importShelfBtn" type="button" class="btn btn-primary">棚データを取り込む</button><div id="shelfImportMessage" class="message"></div></article>
+<article class="import-box"><h3>② 週次在庫（Excel）</h3><label>在庫基準日<input id="stockSnapshotDate" type="date"></label><label>全店舗在庫Excel<input id="stockFileInput" type="file" accept=".xlsx,.xls"></label><button id="importStockBtn" type="button" class="btn btn-primary">在庫Excelを取り込む</button><div id="stockImportMessage" class="message"></div></article>
+</div></form></dialog>
 
-      <div id="storeRows"></div>
-      <button id="addStoreBtn" type="button" class="btn">＋ 店舗を追加</button>
+<template id="storeRowTemplate"><div class="store-row store-row-v101"><input class="store-name" placeholder="店舗名（例：東大阪店）"><input class="store-url" placeholder="売上タブを開いた状態のURL"><input class="store-excluded-shelves" placeholder="除外棚（例：1,2,3,45,51）"><button type="button" class="btn btn-danger remove-store">削除</button></div></template>
 
-      <details>
-        <summary>列の割り当て（通常は自動判定・変更不要）</summary>
-        <div class="mapping-grid">
-          <label>JAN列<input id="mapJan" value="A"></label>
-          <label>品番列<input id="mapSku" value="B"></label>
-          <label>売れ数列<input id="mapQty" value="C"></label>
-          <label>売上金額列<input id="mapSales" value="D"></label>
-          <label>店舗名列<input id="mapStore" value="E"></label>
-          <label>日付列<input id="mapDate" value="F"></label>
-          <label>棚番号列<input id="mapShelf" placeholder="例: G"></label>
-          <label>商品名列<input id="mapName" value="H"></label>
-          <label>在庫列<input id="mapStock" placeholder="例: I"></label>
-        </div>
-        <p class="muted">BMMが売上タブの内容から自動判定します。東大阪店の初期値はA=JAN、B=品番、C=売れ数、D=売上金額、E=店舗、F=日付、H=商品名です。</p>
-      </details>
-
-      <div class="dialog-actions">
-        <button id="loadDemoBtn" type="button" class="btn">デモデータを表示</button>
-        <button id="saveSettingsBtn" type="button" class="btn btn-primary">保存して同期</button>
-      </div>
-      <div id="settingsMessage" class="message"></div>
-    </form>
-  </dialog>
-
-
-  <dialog id="commonDataDialog">
-    <form method="dialog" class="dialog-card" id="commonDataForm">
-      <div class="dialog-head">
-        <div><span class="brand-kicker">BMM WEB</span><h2>共通商品マスタ設定</h2></div>
-        <button value="cancel" class="icon-btn" aria-label="閉じる">×</button>
-      </div>
-
-      <p class="muted">
-        全店舗で共通して使う商品マスタを、ここで1回だけ登録します。<br>
-        商品マスタのタブを開いた状態のGoogleスプレッドシートURLを貼り付けてください。
-      </p>
-
-      <div class="common-data-grid">
-        <label>商品マスタのタブURL
-          <input id="commonMasterUrl" placeholder="https://docs.google.com/spreadsheets/...&gid=...">
-        </label>
-      </div>
-
-      <div class="dialog-actions">
-        <button id="clearCommonMasterBtn" type="button" class="btn btn-danger">登録を解除</button>
-        <button id="saveCommonMasterBtn" type="button" class="btn btn-primary">保存して全店舗を同期</button>
-      </div>
-      <div id="commonDataMessage" class="message"></div>
-    </form>
-  </dialog>
-
-  <template id="storeRowTemplate">
-    <div class="store-row store-row-v032">
-      <input class="store-name" placeholder="店舗名（例：東大阪店）">
-      <input class="store-url" placeholder="売上タブを開いた状態のURL">
-      <button type="button" class="btn btn-danger remove-store">削除</button>
-    </div>
-  </template>
-
-  <script src="core.js"></script>
-  <script src="db.js"></script>
-  <script src="app.js"></script>
-</body>
-</html>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="core.js"></script><script src="db.js"></script><script src="app.js"></script>
+</body></html>
