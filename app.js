@@ -5,7 +5,12 @@ const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maxi
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-let state={config:{stores:[],commonMasterUrl:""},records:[],filtered:[],shelfRows:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
+const DEFAULT_STORES=[
+  {name:"東大阪店",url:"https://docs.google.com/spreadsheets/d/1GYGlpQv95bRDOHRAexdPb6tciBzhPItBPY5YcSYi6UE/edit?gid=1770925758#gid=1770925758",excludedShelves:""},
+  {name:"ららぽーと堺店",url:"https://docs.google.com/spreadsheets/d/1fb5XVcmwpqi-MOFifStk39Rr5fUzU0b7/edit?gid=465268523#gid=465268523",excludedShelves:""},
+  {name:"江坂店",url:"https://docs.google.com/spreadsheets/d/1LSpa6rt6c9ZOEzT5oRVDElYqNcULDKSK/edit?gid=465268523#gid=465268523",excludedShelves:""}
+];
+let state={config:{stores:[...DEFAULT_STORES],commonMasterUrl:""},records:[],filtered:[],shelfRows:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
 
 function table(headers,rows){
   if(!rows.length)return '<div class="empty">表示できるデータがありません。</div>';
@@ -13,7 +18,23 @@ function table(headers,rows){
 }
 
 async function loadState(){
-  state.config=await BMMDB.getMeta("config")||state.config;
+  const savedConfig=await BMMDB.getMeta("config");
+  if(savedConfig){
+    const savedStores=Array.isArray(savedConfig.stores)?savedConfig.stores:[];
+    const merged=[...savedStores];
+    for(const def of DEFAULT_STORES){
+      const i=merged.findIndex(s=>s.name===def.name);
+      if(i>=0){
+        merged[i]={...def,...merged[i],url:def.url};
+      }else{
+        merged.push({...def});
+      }
+    }
+    state.config={...state.config,...savedConfig,stores:merged};
+  }else{
+    state.config={...state.config,stores:DEFAULT_STORES.map(x=>({...x}))};
+    await BMMDB.setMeta("config",state.config);
+  }
   state.records=await BMMDB.getAll(BMMDB.stores.records);
   state.shelfRows=await BMMDB.getAll(BMMDB.stores.shelf);
   state.stockRows=await BMMDB.getAll(BMMDB.stores.stock);
