@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="BODYMAKER BMM Web - 店舗売上・棚・在庫分析">
-<title>BMM Web Version 2.1.3</title>
+<title>BMM Web Version 2.2.0</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
-  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 2.1.3</small></h1><p>店舗売上・棚・在庫分析</p></div>
+  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 2.2.0</small></h1><p>店舗売上・棚・在庫分析</p></div>
   <div class="top-actions">
     <span id="syncStatus" class="status">起動確認中…</span>
     <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
@@ -55,7 +55,7 @@
 <section id="shelves" class="tab-panel">
 <article class="card">
 <h2>棚別分析</h2>
-<p class="muted">「データ1」形式のテキストを取り込むと、JAN・日付・店舗を売上と照合して棚別売上を算出します。除外棚は店舗ごとの設定内容を使用します。</p>
+<p class="muted">「データ1」形式のテキストからJANコードと棚番号を照合し、売上の高い棚から順に表示します。商品名・品番は共通商品マスタのJAN一致から取得します。除外棚は店舗ごとの設定内容を使用します。</p>
 <div id="shelfCoverage"></div><div id="shelfTable"></div>
 </article></section>
 
@@ -68,7 +68,7 @@
 
 <section id="stock" class="tab-panel"><article class="card"><h2>在庫分析</h2>
 <div class="stock-toolbar"><label>在庫基準日<select id="stockSnapshotSelect"></select></label><span id="stockSnapshotInfo" class="muted"></span></div>
-<p class="muted">月曜朝（日曜営業終了時点）の全店舗在庫Excelを取り込んだ基準在庫です。店舗列は増減しても自動判定します。</p>
+<p class="muted">月曜朝（日曜営業終了時点）の全店舗在庫Excelを取り込んだ基準在庫です。在庫0かつ販売実績がない商品は表示せず、選択期間の売れ数が多い商品から表示します。</p>
 <div id="stockTable"></div></article></section>
 
 <section id="history" class="tab-panel"><div class="grid-2">

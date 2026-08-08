@@ -115,35 +115,15 @@ function renderStores(stores){
 }
 function renderShelves(sales){
   const filter={store:$("storeFilter").value,from:$("dateFrom").value,to:$("dateTo").value};
-  const shelf=state.shelfRows.filter(r=>(!filter.store||r.store===filter.store)&&(!filter.from||r.date>=filter.from)&&(!filter.to||r.date<=filter.to));
-
-  const configuredStores=new Map(state.config.stores.map(s=>[s.name,s]));
-  let allocated=[],matchedSales=0,totalSales=sales.reduce((sum,r)=>sum+r.sales,0);
+  const shelf=state.shelfRows.filter(r=>(!filter.store||r.store===filter.store));
+  const configuredStores=new Map(state.config.stores.map(s=>[s.name,s]));let allocated=[],matchedSales=0,totalSales=sales.reduce((sum,r)=>sum+r.sales,0);
   const targetStores=filter.store?[filter.store]:[...new Set(sales.map(r=>r.store).filter(Boolean))];
-
-  for(const storeName of targetStores){
-    const storeSales=sales.filter(r=>r.store===storeName);
-    const storeShelf=shelf.filter(r=>r.store===storeName);
-    const exclusion=configuredStores.get(storeName)?.excludedShelves||"";
-    const result=C.allocateShelfSales(storeSales,storeShelf,C.parseExcludedShelves(exclusion));
-    allocated.push(...result.records);
-    matchedSales+=result.matchedSales;
-  }
-
-  const coverage=totalSales?matchedSales/totalSales:0;
-  const agg=C.aggregateBy(allocated,"shelf").sort((x,y)=>y.sales-x.sales);
-
-  let excludedLabel="";
-  if(filter.store){
-    excludedLabel=configuredStores.get(filter.store)?.excludedShelves||"なし";
-  }else{
-    const labels=state.config.stores.filter(s=>s.excludedShelves).map(s=>`${s.name}: ${s.excludedShelves}`);
-    excludedLabel=labels.length?labels.join(" / "):"なし";
-  }
-
+  for(const storeName of targetStores){const storeSales=sales.filter(r=>r.store===storeName),storeShelf=shelf.filter(r=>r.store===storeName),exclusion=configuredStores.get(storeName)?.excludedShelves||"";const result=C.allocateShelfSales(storeSales,storeShelf,C.parseExcludedShelves(exclusion));allocated.push(...result.records);matchedSales+=result.matchedSales;}
+  const coverage=totalSales?matchedSales/totalSales:0,agg=C.aggregateBy(allocated,"shelf").sort((a,b)=>b.sales-a.sales),topByShelf=new Map();
+  for(const r of allocated){const key=String(r.shelf||"未設定");if(!topByShelf.has(key))topByShelf.set(key,new Map());const pm=topByShelf.get(key),pk=C.normalizeText(r.jan||r.sku),x=pm.get(pk)||{name:r.name||"（商品名未登録）",sku:r.sku||"",sales:0};x.sales+=r.sales;pm.set(pk,x);}
+  let excludedLabel="";if(filter.store)excludedLabel=configuredStores.get(filter.store)?.excludedShelves||"なし";else{const labels=state.config.stores.filter(s=>s.excludedShelves).map(s=>`${s.name}: ${s.excludedShelves}`);excludedLabel=labels.length?labels.join(" / "):"なし";}
   $("shelfCoverage").innerHTML=`<div class="coverage"><span>棚照合率 <b class="${coverage>=.9?"good":coverage>=.6?"warn":"danger"}">${pct(coverage)}</b></span><span>除外棚 ${esc(excludedLabel)}</span><span>棚データ ${num(shelf.length)}行</span></div>`;
-  $("shelfTable").innerHTML=table([{label:"棚番号"},{label:"売上",num:true},{label:"売れ数",num:true},{label:"商品種類",num:true},{label:"平均単価",num:true}],
-    agg.map(x=>[esc(x.key),yen(x.sales),num(x.qty),num(x.productCount),yen(x.qty?x.sales/x.qty:0)]));
+  $("shelfTable").innerHTML=table([{label:"順位"},{label:"棚番号"},{label:"売上",num:true},{label:"売れ数",num:true},{label:"商品種類",num:true},{label:"平均単価",num:true},{label:"主な商品"}],agg.map((x,i)=>{const tops=[...(topByShelf.get(String(x.key))||new Map()).values()].sort((a,b)=>b.sales-a.sales).slice(0,3).map(p=>`${p.name}${p.sku?`（${p.sku}）`:""}`).join(" / ");return[num(i+1),esc(x.key),yen(x.sales),num(Math.round(x.qty*100)/100),num(x.productCount),yen(x.qty?x.sales/x.qty:0),esc(tops)];}));
 }
 function renderABC(records){
   $("abcTable").innerHTML=table([{label:"ランク"},{label:"商品"},{label:"売上",num:true},{label:"構成比",num:true},{label:"累計",num:true}],
@@ -170,16 +150,13 @@ function currentStockIndex(){
 function renderStock(){
   const date=$("stockSnapshotSelect").value||C.latestSnapshotDate(state.stockRows),store=$("storeFilter").value,rows=state.stockRows.filter(r=>r.snapshotDate===date&&(!store||r.store===store));
   $("stockSnapshotInfo").textContent=date?`${date} 時点 / ${store||"全店舗"}`:"在庫Excel未取込";
-  const sales=C.aggregateProducts(state.filtered),smap=new Map();
-  for(const p of sales){if(p.jan)smap.set(C.normalizeText(p.jan),p);if(p.sku)smap.set(C.normalizeText(p.sku),p);}
-  const grouped=new Map();
-  for(const r of rows){
-    const k=C.normalizeText(r.jan||r.sku),x=grouped.get(k)||{jan:r.jan,sku:r.sku,name:r.name,stock:0,stores:new Set()};
-    x.stock+=r.stock;x.stores.add(r.store);if(!x.name&&r.name)x.name=r.name;grouped.set(k,x);
-  }
-  const list=[...grouped.values()].map(x=>{const s=smap.get(C.normalizeText(x.jan||x.sku))||{qty:0,sales:0};return {...x,qty:s.qty,sales:s.sales};}).sort((a,b)=>a.stock-b.stock);
-  $("stockTable").innerHTML=table([{label:"JAN"},{label:"品番"},{label:"商品名"},{label:"在庫",num:true},{label:"期間売れ数",num:true},{label:"期間売上",num:true},{label:"店舗"}],
-    list.map(x=>[esc(x.jan),esc(x.sku),esc(x.name),num(x.stock),num(x.qty),yen(x.sales),esc([...x.stores].join("・"))]));
+  const periodMap=new Map();for(const p of C.aggregateProducts(state.filtered)){if(p.jan)periodMap.set(C.normalizeText(p.jan),p);}
+  const historyMap=new Map();for(const p of C.aggregateProducts(state.records.filter(r=>!store||r.store===store))){if(p.jan)historyMap.set(C.normalizeText(p.jan),p);}
+  const masterByJan=new Map();for(const m of state.masterRows){if(m.jan)masterByJan.set(C.normalizeText(m.jan),m);}
+  const grouped=new Map();for(const r of rows){const k=C.normalizeText(r.jan||r.sku);if(!k)continue;const m=r.jan?masterByJan.get(C.normalizeText(r.jan)):null,x=grouped.get(k)||{jan:r.jan||m?.jan||"",sku:m?.sku||r.sku||"",name:m?.name||r.name||"（商品名未登録）",stock:0,stores:new Set()};x.stock+=r.stock;x.stores.add(r.store);grouped.set(k,x);}
+  for(const [k,h] of historyMap){if(grouped.has(k))continue;const m=masterByJan.get(k);grouped.set(k,{jan:h.jan||m?.jan||"",sku:m?.sku||h.sku||"",name:m?.name||h.name||"（商品名未登録）",stock:0,stores:new Set(store?[store]:h.stores||[])});}
+  const list=[...grouped.values()].map(x=>{const key=C.normalizeText(x.jan),p=periodMap.get(key)||{qty:0,sales:0},h=historyMap.get(key);return{...x,qty:p.qty||0,sales:p.sales||0,hasHistory:Boolean(h)};}).filter(x=>x.stock!==0||x.hasHistory).sort((a,b)=>(b.qty-a.qty)||(b.sales-a.sales)||(b.stock-a.stock));
+  $("stockTable").innerHTML=table([{label:"順位"},{label:"商品名"},{label:"品番"},{label:"JAN"},{label:"期間売れ数",num:true},{label:"期間売上",num:true},{label:"現在庫",num:true},{label:"在庫状況"}],list.map((x,i)=>{const status=x.stock<=0?"在庫0":x.qty>0&&x.stock<x.qty?"少なめ":"在庫あり";return[num(i+1),esc(x.name),esc(x.sku),esc(x.jan),num(x.qty),yen(x.sales),num(x.stock),esc(status)];}));
 }
 function renderHistory(){
   const sr=C.dataRange(state.records),sh=C.dataRange(state.shelfRows),stockDates=[...new Set(state.stockRows.map(r=>r.snapshotDate))].filter(Boolean).sort();
@@ -213,13 +190,15 @@ async function fetchStore(store,midx){
   const inspected=C.validateSalesRecords(parsed,store.name,C.localToday());
 
   if(!inspected.ok){
-    throw new Error(`${store.name}: 有効な売上行が0件です。URLまたは A=JAN / B=品番 / C=数量 / D=売上 / F=日付 を確認してください。`);
+    const sample=inspected.invalid.slice(0,3).map(x=>`行${x.record._row}: ${x.reasons.join("/")}`).join("、");
+    throw new Error(`${store.name}: 有効な売上データがありません。${sample||"A=JAN / B=品番 / C=数量 / D=売上 / E=店舗 / F=日付 を確認してください。"}`);
   }
 
+  const normalized=inspected.valid.map(r=>({...r,store:store.name}));
   return {
-    records:C.enrichWithMaster(inspected.valid,midx),
+    records:C.enrichWithMaster(normalized,midx),
     ignored:inspected.ignored.length,
-    invalid:inspected.invalid.length,
+    invalid:inspected.invalid,
     total:inspected.total
   };
 }
@@ -245,13 +224,16 @@ async function syncAll(options={}){
         store:s.name,
         rows:payload.records.length,
         ignored:payload.ignored,
-        invalid:payload.invalid
+        invalid:payload.invalid.length
       });
 
       total+=payload.records.length;
       updated.push(`${s.name} ${payload.records.length}行`);
-      if(payload.ignored||payload.invalid){
-        warnings.push(`${s.name}: ${payload.records.length}行取込（不要行${payload.ignored} / 不正行${payload.invalid}を除外）`);
+
+      if(payload.ignored||payload.invalid.length){
+        warnings.push(
+          `${s.name}: ${payload.records.length}行取込 / 空行等${payload.ignored}行無視 / 不正${payload.invalid.length}行除外`
+        );
       }
     }
     if(!total)throw new Error(errors.join("\n")||"データを取得できません。");
@@ -260,11 +242,11 @@ async function syncAll(options={}){
     if(errors.length){
       updateStatus(`一部失敗 ${errors.length}店舗 / ${updated.join("・")}`);
       if(!options.silent) alert(errors.join("\n"));
+    }else if(warnings.length){
+      updateStatus(`${total}行更新（${updated.join("・")}）`);
+      if(!options.silent) alert(`同期完了\n\n${warnings.join("\n")}`);
     }else{
       updateStatus(`${total}行更新（${updated.join("・")}）`);
-      if(warnings.length&&!options.silent){
-        alert(`3店舗の同期は完了しました。\n\n${warnings.join("\n")}`);
-      }
     }
   }catch(e){updateStatus(`更新失敗：${String(e.message||e).slice(0,80)}`);if(!options.silent)alert(e.message);else console.error(e);}
   finally{$("refreshBtn").disabled=false;}

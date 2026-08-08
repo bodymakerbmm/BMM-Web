@@ -151,35 +151,32 @@
   }
 
   function inspectSalesRecords(records,configuredStore,today=localToday()){
-    const valid=[],ignored=[],invalid=[];
+    const valid=[],invalid=[],ignored=[];
 
     for(const r of records){
-      const janOk=/^\d{8,14}$/.test(String(r.jan||""));
-      const skuOk=Boolean(String(r.sku||"").trim());
-      const qtyOk=Number.isFinite(r.qty) && r.qty>0 && Math.abs(r.qty)<=10000;
-      const salesOk=Number.isFinite(r.sales) && Math.abs(r.sales)<=1000000000;
-      const dateOk=Boolean(r.date) && isDateInAllowedRange(r.date,today,10,0);
+      const hasId=Boolean(r.jan||r.sku);
+      const hasQty=Number.isFinite(r.qty);
+      const hasSales=Number.isFinite(r.sales);
 
-      // 売上行の最低条件は「商品IDがある」「数量が1以上」。
-      // 店舗名・日付だけが残った行は、parseNumber("")=0 の影響を受けず必ず無視する。
-      if(!(janOk||skuOk) || !qtyOk){
+      // 店舗名・日付だけが残っている行、完全空行に近い行は売上ではないため無視する。
+      // 例: 堺の163/164行のように E/F列だけが入っている行。
+      if(!hasId && !hasQty && !hasSales){
         ignored.push(r);
         continue;
       }
 
-      // 0円売上は正常。金額異常または日付異常だけ除外。
-      if(!salesOk || !dateOk){
-        const reasons=[];
-        if(!salesOk) reasons.push("売上");
-        if(!dateOk) reasons.push("日付");
-        invalid.push({record:r,reasons});
-        continue;
-      }
+      const reasons=[];
+      if(r.jan&&!/^\d{8,14}$/.test(r.jan)) reasons.push("JAN");
+      if(!r.jan&&!r.sku) reasons.push("商品ID");
+      if(!Number.isFinite(r.qty)||r.qty===0||Math.abs(r.qty)>10000) reasons.push("数量");
+      if(!Number.isFinite(r.sales)||Math.abs(r.sales)>1000000000) reasons.push("売上");
+      if(!r.date||!isDateInAllowedRange(r.date,today,10,0)) reasons.push("日付");
+      if(configuredStore&&normalizeText(r.store)!==normalizeText(configuredStore)) reasons.push("店舗");
 
-      // URLが店舗を一意に決めるため、E列の表記差で同期を止めない。
-      valid.push({...r,store:configuredStore||r.store});
+      (reasons.length?invalid:valid).push(reasons.length?{record:r,reasons}:r);
     }
 
+    // 一部に壊れた行があっても、正常な売上行が1件以上あれば店舗同期は継続する。
     return {
       ok:valid.length>0,
       valid,
@@ -278,25 +275,23 @@
 
   function allocateShelfSales(salesRecords,shelfRows,exclude=EXCLUDED_SHELVES){
     exclude=parseExcludedShelves(exclude);
-    const salesMap=new Map();
-    for(const s of salesRecords){
-      const key=[normalizeText(s.store),s.date,normalizeText(s.jan)].join("|"),x=salesMap.get(key)||{sales:0,qty:0,name:s.name,sku:s.sku};
-      x.sales+=s.sales;x.qty+=s.qty;if(!x.name&&s.name)x.name=s.name;if(!x.sku&&s.sku)x.sku=s.sku;salesMap.set(key,x);
-    }
-    const shelfGroups=new Map();
+    const shelfMap=new Map();
     for(const r of shelfRows){
-      const key=[normalizeText(r.store),r.date,normalizeText(r.jan)].join("|");if(!shelfGroups.has(key))shelfGroups.set(key,[]);shelfGroups.get(key).push(r);
+      if(!r.jan||!r.shelf)continue;
+      const key=[normalizeText(r.store),normalizeText(r.jan)].join("|");
+      if(!shelfMap.has(key))shelfMap.set(key,[]);shelfMap.get(key).push(r);
     }
     const result=[];let matchedSales=0,totalSales=salesRecords.reduce((s,r)=>s+r.sales,0);
-    for(const [key,allRows] of shelfGroups){
-      const sale=salesMap.get(key);if(!sale)continue;
-      const allQty=allRows.reduce((s,r)=>s+r.qty,0);if(!allQty)continue;
-      const included=allRows.filter(r=>!exclude.has(String(r.shelf)));
-      const includedQty=included.reduce((s,r)=>s+r.qty,0);
-      if(!includedQty)continue;
-      const includedSales=sale.sales*(includedQty/allQty);matchedSales+=includedSales;
+    for(const sale of salesRecords){
+      if(!sale.jan)continue;
+      const key=[normalizeText(sale.store),normalizeText(sale.jan)].join("|"),allRows=shelfMap.get(key)||[];
+      if(!allRows.length)continue;
+      const included=allRows.filter(r=>!exclude.has(String(r.shelf)));if(!included.length)continue;
+      const qtyTotal=included.reduce((s,r)=>s+Math.max(0,Number(r.qty)||0),0),divisor=qtyTotal>0?qtyTotal:included.length;
+      matchedSales+=sale.sales;
       for(const r of included){
-        result.push({store:r.store,date:r.date,shelf:r.shelf,jan:r.jan,sku:sale.sku,name:sale.name,qty:r.qty,sales:sale.sales*(r.qty/allQty)});
+        const weight=qtyTotal>0?Math.max(0,Number(r.qty)||0)/divisor:1/divisor;
+        result.push({store:sale.store,date:sale.date,shelf:r.shelf,jan:sale.jan,sku:sale.sku,name:sale.name,qty:sale.qty*weight,sales:sale.sales*weight});
       }
     }
     return {records:result,matchedSales,totalSales,coverage:totalSales?matchedSales/totalSales:0};
