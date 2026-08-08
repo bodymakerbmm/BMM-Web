@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="2.1.0", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="2.2.2", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -114,34 +114,75 @@ function renderStores(stores){
   $("storeCompareTable").innerHTML=table([{label:"店舗"},{label:"売上",num:true},{label:"売れ数",num:true},{label:"商品種類",num:true},{label:"平均単価",num:true}],
     stores.map(s=>[esc(s.key),yen(s.sales),num(s.qty),num(s.productCount),yen(s.qty?s.sales/s.qty:0)]));
 }
-function activeShelfRowsForSales(storeName,salesRecords){
-  const history=state.shelfHistory.filter(r=>r.store===storeName);
+function shelfSnapshotForDate(storeName,saleDate){
+  const history=state.shelfHistory.filter(r=>r.store===storeName&&r.effectiveFrom);
   if(!history.length)return state.shelfRows.filter(r=>r.store===storeName);
-  const snapshots=[...new Set(history.map(r=>r.effectiveFrom).filter(Boolean))].sort();
-  const picked=[];const seen=new Set();
-  for(const sale of salesRecords){
-    let eff="";
-    for(const d of snapshots){if(d<=sale.date)eff=d;else break;}
-    if(!eff&&snapshots.length)eff=snapshots[0];
-    for(const r of history.filter(x=>x.effectiveFrom===eff)){
-      const k=[eff,r.jan,r.shelf].join("|");
-      if(!seen.has(k)){seen.add(k);picked.push(r);}
-    }
+
+  const dates=[...new Set(history.map(r=>r.effectiveFrom))].sort();
+  let effective="";
+  for(const d of dates){
+    if(d<=saleDate)effective=d;
+    else break;
   }
-  return picked;
+  // 売上日より前の履歴が無い場合は、最初の登録日を暫定利用。
+  if(!effective)effective=dates[0];
+  return history.filter(r=>r.effectiveFrom===effective);
 }
 
+
 function renderShelves(sales){
-  const filter={store:$("storeFilter").value,from:$("dateFrom").value,to:$("dateTo").value};
-  const shelf=state.shelfRows.filter(r=>(!filter.store||r.store===filter.store));
-  const configuredStores=new Map(state.config.stores.map(s=>[s.name,s]));let allocated=[],matchedSales=0,totalSales=sales.reduce((sum,r)=>sum+r.sales,0);
+  const filter={store:$("storeFilter").value};
+  const configuredStores=new Map(state.config.stores.map(s=>[s.name,s]));
+  let allocated=[],matchedSales=0,totalSales=sales.reduce((sum,r)=>sum+r.sales,0);
   const targetStores=filter.store?[filter.store]:[...new Set(sales.map(r=>r.store).filter(Boolean))];
-  for(const storeName of targetStores){const storeSales=sales.filter(r=>r.store===storeName),storeShelf=shelf.filter(r=>r.store===storeName),exclusion=configuredStores.get(storeName)?.excludedShelves||"";const result=C.allocateShelfSales(storeSales,storeShelf,C.parseExcludedShelves(exclusion));allocated.push(...result.records);matchedSales+=result.matchedSales;}
-  const coverage=totalSales?matchedSales/totalSales:0,agg=C.aggregateBy(allocated,"shelf").sort((a,b)=>b.sales-a.sales),topByShelf=new Map();
-  for(const r of allocated){const key=String(r.shelf||"未設定");if(!topByShelf.has(key))topByShelf.set(key,new Map());const pm=topByShelf.get(key),pk=C.normalizeText(r.jan||r.sku),x=pm.get(pk)||{name:r.name||"（商品名未登録）",sku:r.sku||"",sales:0};x.sales+=r.sales;pm.set(pk,x);}
-  let excludedLabel="";if(filter.store)excludedLabel=configuredStores.get(filter.store)?.excludedShelves||"なし";else{const labels=state.config.stores.filter(s=>s.excludedShelves).map(s=>`${s.name}: ${s.excludedShelves}`);excludedLabel=labels.length?labels.join(" / "):"なし";}
-  $("shelfCoverage").innerHTML=`<div class="coverage"><span>棚照合率 <b class="${coverage>=.9?"good":coverage>=.6?"warn":"danger"}">${pct(coverage)}</b></span><span>除外棚 ${esc(excludedLabel)}</span><span>棚データ ${num(shelf.length)}行</span></div>`;
-  $("shelfTable").innerHTML=table([{label:"順位"},{label:"棚番号"},{label:"売上",num:true},{label:"売れ数",num:true},{label:"商品種類",num:true},{label:"平均単価",num:true},{label:"主な商品"}],agg.map((x,i)=>{const tops=[...(topByShelf.get(String(x.key))||new Map()).values()].sort((a,b)=>b.sales-a.sales).slice(0,3).map(p=>`${p.name}${p.sku?`（${p.sku}）`:""}`).join(" / ");return[num(i+1),esc(x.key),yen(x.sales),num(Math.round(x.qty*100)/100),num(x.productCount),yen(x.qty?x.sales/x.qty:0),esc(tops)];}));
+
+  for(const storeName of targetStores){
+    const storeSales=sales.filter(r=>r.store===storeName);
+    const exclusion=configuredStores.get(storeName)?.excludedShelves||"";
+
+    // 同じ有効棚配置を使う売上日ごとに分けて集計し、複数世代の棚配置を混ぜない。
+    const bySnapshot=new Map();
+    for(const sale of storeSales){
+      const rows=shelfSnapshotForDate(storeName,sale.date);
+      const signature=rows.length?(rows[0].effectiveFrom||"latest"):"none";
+      if(!bySnapshot.has(signature))bySnapshot.set(signature,{sales:[],rows});
+      bySnapshot.get(signature).sales.push(sale);
+    }
+
+    for(const g of bySnapshot.values()){
+      const result=C.allocateShelfSales(g.sales,g.rows,C.parseExcludedShelves(exclusion));
+      allocated.push(...result.records);
+      matchedSales+=result.matchedSales;
+    }
+  }
+
+  const coverage=totalSales?matchedSales/totalSales:0;
+  const agg=C.aggregateBy(allocated,"shelf").sort((a,b)=>b.sales-a.sales);
+  const topByShelf=new Map();
+  for(const r of allocated){
+    const key=String(r.shelf||"未設定");
+    if(!topByShelf.has(key))topByShelf.set(key,new Map());
+    const pm=topByShelf.get(key),pk=C.normalizeText(r.jan||r.sku);
+    const x=pm.get(pk)||{name:r.name||"（商品名未登録）",sku:r.sku||"",sales:0};
+    x.sales+=r.sales;pm.set(pk,x);
+  }
+
+  let excludedLabel="";
+  if(filter.store)excludedLabel=configuredStores.get(filter.store)?.excludedShelves||"なし";
+  else{
+    const labels=state.config.stores.filter(s=>s.excludedShelves).map(s=>`${s.name}: ${s.excludedShelves}`);
+    excludedLabel=labels.length?labels.join(" / "):"なし";
+  }
+
+  $("shelfCoverage").innerHTML=`<div class="coverage"><span>棚照合率 <b class="${coverage>=.9?"good":coverage>=.6?"warn":"danger"}">${pct(coverage)}</b></span><span>除外棚 ${esc(excludedLabel)}</span><span>棚履歴 ${num(state.shelfHistory.length)}行</span></div>`;
+  $("shelfTable").innerHTML=table(
+    [{label:"順位"},{label:"棚番号"},{label:"売上",num:true},{label:"売れ数",num:true},{label:"商品種類",num:true},{label:"平均単価",num:true},{label:"主な商品"}],
+    agg.map((x,i)=>{
+      const tops=[...(topByShelf.get(String(x.key))||new Map()).values()].sort((a,b)=>b.sales-a.sales).slice(0,3)
+        .map(p=>`${p.name}${p.sku?`（${p.sku}）`:""}`).join(" / ");
+      return [num(i+1),esc(x.key),yen(x.sales),num(Math.round(x.qty*100)/100),num(x.productCount),yen(x.qty?x.sales/x.qty:0),esc(tops)];
+    })
+  );
 }
 function renderABC(records){
   $("abcTable").innerHTML=table([{label:"ランク"},{label:"商品"},{label:"売上",num:true},{label:"構成比",num:true},{label:"累計",num:true}],
@@ -338,8 +379,8 @@ async function importShelf(){
 async function importStock(){
   const f=$("stockFileInput").files[0];if(!f){$("stockImportMessage").textContent="在庫Excelを選択してください。";return;}
   let date=$("stockSnapshotDate").value||C.inferDateFromFilename(f.name);if(!date){$("stockImportMessage").textContent="在庫基準日を指定してください。";return;}
-  try{const rows=await rowsFromSpreadsheetFile(f,"inventory"),records=C.inventoryRowsToRecords(rows,date,state.config.stores.map(s=>s.name));if(!records.length)throw new Error("在庫データを判定できません。");
-    await BMMDB.replaceStockSnapshot(date,records);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"在庫",target:date,rows:records.length});await loadState();renderAll();$("stockSnapshotSelect").value=date;renderStock();$("stockImportMessage").textContent=`${date}：${records.length}件取り込みました。`;
+  try{const rows=await rowsFromSpreadsheetFile(f,"inventory"),records=C.inventoryRowsToRecords(rows,date,state.config.stores.map(s=>s.name));if(!records.length)throw new Error("在庫データを判定できません。");records=C.compactInventoryRecords(records);
+    await BMMDB.replaceStockSnapshot(date,records);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"在庫",target:date,rows:records.length});await loadState();renderAll();$("stockSnapshotSelect").value=date;renderStock();$("stockImportMessage").textContent=`${date}：在庫あり ${records.length}件を保存しました（0在庫は保存せず、販売履歴から0在庫表示します）。`;
   }catch(e){$("stockImportMessage").textContent=e.message;}
 }
 

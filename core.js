@@ -383,6 +383,11 @@
     return out;
   }
 
+  function compactInventoryRecords(records){
+    // 0在庫は保存しない。販売実績がある0在庫商品は売上履歴側から在庫画面へ0として表示できる。
+    return records.filter(r=>Number(r.stock)!==0);
+  }
+
   function stockRowKey(r){return [r.snapshotDate,normalizeText(r.store),normalizeText(r.jan||r.sku)].join("|");}
   function latestSnapshotDate(rows){return rows.map(r=>r.snapshotDate).filter(Boolean).sort().pop()||"";}
 
@@ -391,6 +396,6 @@
     sheetUrlToCsv,detectSalesMapping,rowsToRecords,inspectSalesRecords,isPlausibleSalesRecord,validateSalesRecords,productKey,recordKey,
     filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods,matchesSearch,dataRange,cutoffDateForYears,maxRecordDate,
     parseShelfText,shelfRowKey,parseExcludedShelves,allocateShelfSales,detectMasterLayout,masterRowsToRecords,buildMasterIndex,enrichWithMaster,
-    inferDateFromFilename,detectInventoryLayout,inventoryRowsToRecords,stockRowKey,latestSnapshotDate
+    inferDateFromFilename,detectInventoryLayout,inventoryRowsToRecords,compactInventoryRecords,stockRowKey,latestSnapshotDate
   };
 });

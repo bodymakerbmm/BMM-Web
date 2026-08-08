@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const DB_NAME="bmm-web-db", DB_VERSION=4;
+  const DB_NAME="bmm-web-db", DB_VERSION=5;
   const RECORDS="records", META="meta", SYNC_LOG="syncLog", SHELF="shelfRows", STOCK="stockRows", MASTER="masterRows", SHELF_HISTORY="shelfHistory";
 
   function openDB(){
@@ -27,6 +27,17 @@
           const s=db.createObjectStore(STOCK,{keyPath:"_id"});s.createIndex("snapshotDate","snapshotDate");s.createIndex("store","store");
         }
         if(!db.objectStoreNames.contains(MASTER))db.createObjectStore(MASTER,{keyPath:"_id"});
+        if(!db.objectStoreNames.contains(SHELF_HISTORY)){
+          const sh=db.createObjectStore(SHELF_HISTORY,{keyPath:"_id"});
+          sh.createIndex("store","store");
+          sh.createIndex("effectiveFrom","effectiveFrom");
+          sh.createIndex("storeEffective",["store","effectiveFrom"]);
+        }else{
+          const sh=req.transaction.objectStore(SHELF_HISTORY);
+          if(!sh.indexNames.contains("store"))sh.createIndex("store","store");
+          if(!sh.indexNames.contains("effectiveFrom"))sh.createIndex("effectiveFrom","effectiveFrom");
+          if(!sh.indexNames.contains("storeEffective"))sh.createIndex("storeEffective",["store","effectiveFrom"]);
+        }
       };
       req.onsuccess=()=>resolve(req.result);
     });
@@ -83,26 +94,22 @@
   }
 
   async function replaceShelfSnapshot(storeName,effectiveFrom,rows){
+    if(!storeName||!effectiveFrom)return;
     const db=await openDB();
     try{
-      const tx=db.transaction(SHELF_HISTORY,"readwrite"),st=tx.objectStore(SHELF_HISTORY);
-      const req=st.openCursor();
-      await new Promise((resolve,reject)=>{
-        req.onerror=()=>reject(req.error);
-        req.onsuccess=()=>{
-          const c=req.result;
-          if(!c){resolve();return;}
-          const v=c.value||{};
-          if(v.store===storeName&&v.effectiveFrom===effectiveFrom)c.delete();
-          c.continue();
-        };
-      });
-      for(const r of rows){
-        const id=[storeName,effectiveFrom,window.BMMCore.normalizeText(r.jan),String(r.shelf)].join("|");
-        st.put({...r,store:storeName,effectiveFrom,_id:id});
+      await deleteIndexRange(db,SHELF_HISTORY,"storeEffective",[storeName,effectiveFrom]);
+      if(rows.length){
+        await putRows(db,SHELF_HISTORY,rows,r=>
+          [storeName,effectiveFrom,window.BMMCore.normalizeText(r.jan),String(r.shelf)].join("|")
+        );
       }
-      await txDone(tx);
     }finally{db.close();}
+  }
+
+  async function putRowsChunked(db,storeName,rows,keyFn,chunkSize=1500){
+    for(let i=0;i<rows.length;i+=chunkSize){
+      await putRows(db,storeName,rows.slice(i,i+chunkSize),keyFn);
+    }
   }
 
   async function replaceStockSnapshot(snapshotDate,rows){
@@ -110,9 +117,10 @@
     const db=await openDB();
     try{
       await deleteIndexRange(db,STOCK,"snapshotDate",snapshotDate);
-      if(rows.length)await putRows(db,STOCK,rows,r=>window.BMMCore.stockRowKey(r));
+      if(rows.length)await putRowsChunked(db,STOCK,rows,r=>window.BMMCore.stockRowKey(r),1500);
     }finally{db.close();}
   }
+
   async function replaceMaster(rows){
     const db=await openDB();try{const tx=db.transaction(MASTER,"readwrite"),s=tx.objectStore(MASTER);s.clear();for(const r of rows){const id=window.BMMCore.normalizeText(r.sku||r.jan||r.name);if(id)s.put({...r,_id:id});}await txDone(tx);}finally{db.close();}
   }
@@ -139,7 +147,7 @@
 
   async function exportAll(){return {records:await getAll(RECORDS),shelfRows:await getAll(SHELF),shelfHistory:await getAll(SHELF_HISTORY),stockRows:await getAll(STOCK),masterRows:await getAll(MASTER),syncLog:await getSyncLog(),config:await getMeta("config"),lastSynced:await getMeta("lastSynced"),salesSchemaVersion:await getMeta("salesSchemaVersion")};}
   async function importAll(p){
-    for(const s of [RECORDS,SHELF,STOCK,MASTER,SYNC_LOG])await clearStore(s);
+    for(const s of [RECORDS,SHELF,SHELF_HISTORY,STOCK,MASTER,SYNC_LOG])await clearStore(s);
     const groups=new Map();for(const r of p.records||[]){const k=r.store||"未設定";if(!groups.has(k))groups.set(k,[]);groups.get(k).push(r);}for(const [k,v] of groups)await replaceStoreRange(k,v);
     const sg=new Map();for(const r of p.shelfRows||[]){const k=r.store||"未設定";if(!sg.has(k))sg.set(k,[]);sg.get(k).push(r);}for(const [k,v] of sg)await replaceShelfDates(k,v);
     const hist=new Map();
@@ -157,6 +165,6 @@
     if(p.masterRows?.length)await replaceMaster(p.masterRows);for(const l of p.syncLog||[])await addSyncLog(l);if(p.config)await setMeta("config",p.config);if(p.lastSynced)await setMeta("lastSynced",p.lastSynced);
   }
 
-  window.BMMDB={openDB,getAll,clearStore,replaceStoreRange,replaceShelfDates,replaceStockSnapshot,replaceMaster,pruneBefore,cleanInvalidSalesRecords,resetSalesForSchemaMigration,setMeta,getMeta,addSyncLog,getSyncLog,exportAll,importAll,
+  window.BMMDB={openDB,getAll,clearStore,replaceStoreRange,replaceShelfDates,replaceShelfSnapshot,replaceStockSnapshot,replaceMaster,pruneBefore,cleanInvalidSalesRecords,resetSalesForSchemaMigration,setMeta,getMeta,addSyncLog,getSyncLog,exportAll,importAll,
     stores:{records:RECORDS,meta:META,syncLog:SYNC_LOG,shelf:SHELF,shelfHistory:SHELF_HISTORY,stock:STOCK,master:MASTER}};
 })();
