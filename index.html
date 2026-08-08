@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="BODYMAKER BMM Web - 店舗売上・棚・在庫分析">
-<title>BMM Web Version 2.0.4</title>
+<title>BMM Web Version 2.1.1</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
-  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 2.0.4</small></h1><p>店舗売上・棚・在庫分析</p></div>
+  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 2.1.1</small></h1><p>店舗売上・棚・在庫分析</p></div>
   <div class="top-actions">
     <span id="syncStatus" class="status">起動確認中…</span>
     <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
@@ -19,7 +19,7 @@
 </header>
 
 <main class="container">
-<section class="notice" id="setupNotice"><strong>最初に店舗設定が必要です。</strong> 売上Googleスプレッドシートを登録してください。売上・棚・在庫の実データはGitHubへ保存されず、この端末のブラウザ内に最大3年分保存されます。</section>
+<section class="notice" id="setupNotice"><strong>最初に店舗設定が必要です。</strong> 売上Googleスプレッドシートを登録してください。売上・棚・在庫の実データはGitHubへ保存されず、この端末のブラウザ内に最大3年分保存されます。東大阪店・ららぽーと堺店・江坂店の売上URLは登録済みです。</section>
 
 <section class="filters card">
 <label>店舗<select id="storeFilter"><option value="">全店舗</option></select></label>
@@ -87,7 +87,7 @@
 
 <dialog id="commonDataDialog"><form method="dialog" class="dialog-card">
 <div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>共通商品マスタ</h2></div><button value="cancel" class="icon-btn">×</button></div>
-<p class="muted">商品マスタは全店舗共通です。GoogleスプレッドシートURL、またはCSV / Excelファイルのどちらかで登録できます。ローカルファイルはこの端末内だけで処理され、外部へ送信しません。</p>
+<p class="muted">商品マスタは全店舗共通です。商品名はJANコード完全一致でこのマスタから取得し、売上シートのH列は使用しません。GoogleスプレッドシートURL、またはCSV / Excelファイルのどちらかで登録できます。ローカルファイルはこの端末内だけで処理され、外部へ送信しません。</p>
 <div class="common-data-grid"><label>商品マスタGoogleタブURL<input id="commonMasterUrl" placeholder="任意：GoogleスプレッドシートURL"></label>
 <label class="file-drop">商品マスタファイル（CSV / XLSX）<input id="masterFileInput" type="file" accept=".csv,.xlsx,.xls"></label></div>
 <div class="dialog-actions"><button id="saveCommonMasterUrlBtn" type="button" class="btn">URLを保存</button><button id="importMasterFileBtn" type="button" class="btn btn-primary">ファイルを取り込む</button></div>
