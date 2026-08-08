@@ -213,15 +213,13 @@ async function fetchStore(store,midx){
   const inspected=C.validateSalesRecords(parsed,store.name,C.localToday());
 
   if(!inspected.ok){
-    const sample=inspected.invalid.slice(0,3).map(x=>`行${x.record._row}: ${x.reasons.join("/")}`).join("、");
-    throw new Error(`${store.name}: 有効な売上データがありません。${sample||"A=JAN / B=品番 / C=数量 / D=売上 / E=店舗 / F=日付 を確認してください。"}`);
+    throw new Error(`${store.name}: 有効な売上行が0件です。URLまたは A=JAN / B=品番 / C=数量 / D=売上 / F=日付 を確認してください。`);
   }
 
-  const normalized=inspected.valid.map(r=>({...r,store:store.name}));
   return {
-    records:C.enrichWithMaster(normalized,midx),
+    records:C.enrichWithMaster(inspected.valid,midx),
     ignored:inspected.ignored.length,
-    invalid:inspected.invalid,
+    invalid:inspected.invalid.length,
     total:inspected.total
   };
 }
@@ -247,16 +245,13 @@ async function syncAll(options={}){
         store:s.name,
         rows:payload.records.length,
         ignored:payload.ignored,
-        invalid:payload.invalid.length
+        invalid:payload.invalid
       });
 
       total+=payload.records.length;
       updated.push(`${s.name} ${payload.records.length}行`);
-
-      if(payload.ignored||payload.invalid.length){
-        warnings.push(
-          `${s.name}: ${payload.records.length}行取込 / 空行等${payload.ignored}行無視 / 不正${payload.invalid.length}行除外`
-        );
+      if(payload.ignored||payload.invalid){
+        warnings.push(`${s.name}: ${payload.records.length}行取込（不要行${payload.ignored} / 不正行${payload.invalid}を除外）`);
       }
     }
     if(!total)throw new Error(errors.join("\n")||"データを取得できません。");
@@ -265,11 +260,11 @@ async function syncAll(options={}){
     if(errors.length){
       updateStatus(`一部失敗 ${errors.length}店舗 / ${updated.join("・")}`);
       if(!options.silent) alert(errors.join("\n"));
-    }else if(warnings.length){
-      updateStatus(`${total}行更新（${updated.join("・")}）`);
-      if(!options.silent) alert(`同期完了\n\n${warnings.join("\n")}`);
     }else{
       updateStatus(`${total}行更新（${updated.join("・")}）`);
+      if(warnings.length&&!options.silent){
+        alert(`3店舗の同期は完了しました。\n\n${warnings.join("\n")}`);
+      }
     }
   }catch(e){updateStatus(`更新失敗：${String(e.message||e).slice(0,80)}`);if(!options.silent)alert(e.message);else console.error(e);}
   finally{$("refreshBtn").disabled=false;}

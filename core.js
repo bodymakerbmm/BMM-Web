@@ -151,32 +151,35 @@
   }
 
   function inspectSalesRecords(records,configuredStore,today=localToday()){
-    const valid=[],invalid=[],ignored=[];
+    const valid=[],ignored=[],invalid=[];
 
     for(const r of records){
-      const hasId=Boolean(r.jan||r.sku);
-      const hasQty=Number.isFinite(r.qty);
-      const hasSales=Number.isFinite(r.sales);
+      const janOk=/^\d{8,14}$/.test(String(r.jan||""));
+      const skuOk=Boolean(String(r.sku||"").trim());
+      const qtyOk=Number.isFinite(r.qty) && r.qty>0 && Math.abs(r.qty)<=10000;
+      const salesOk=Number.isFinite(r.sales) && Math.abs(r.sales)<=1000000000;
+      const dateOk=Boolean(r.date) && isDateInAllowedRange(r.date,today,10,0);
 
-      // 店舗名・日付だけが残っている行、完全空行に近い行は売上ではないため無視する。
-      // 例: 堺の163/164行のように E/F列だけが入っている行。
-      if(!hasId && !hasQty && !hasSales){
+      // 売上行の最低条件は「商品IDがある」「数量が1以上」。
+      // 店舗名・日付だけが残った行は、parseNumber("")=0 の影響を受けず必ず無視する。
+      if(!(janOk||skuOk) || !qtyOk){
         ignored.push(r);
         continue;
       }
 
-      const reasons=[];
-      if(r.jan&&!/^\d{8,14}$/.test(r.jan)) reasons.push("JAN");
-      if(!r.jan&&!r.sku) reasons.push("商品ID");
-      if(!Number.isFinite(r.qty)||r.qty===0||Math.abs(r.qty)>10000) reasons.push("数量");
-      if(!Number.isFinite(r.sales)||Math.abs(r.sales)>1000000000) reasons.push("売上");
-      if(!r.date||!isDateInAllowedRange(r.date,today,10,0)) reasons.push("日付");
-      if(configuredStore&&normalizeText(r.store)!==normalizeText(configuredStore)) reasons.push("店舗");
+      // 0円売上は正常。金額異常または日付異常だけ除外。
+      if(!salesOk || !dateOk){
+        const reasons=[];
+        if(!salesOk) reasons.push("売上");
+        if(!dateOk) reasons.push("日付");
+        invalid.push({record:r,reasons});
+        continue;
+      }
 
-      (reasons.length?invalid:valid).push(reasons.length?{record:r,reasons}:r);
+      // URLが店舗を一意に決めるため、E列の表記差で同期を止めない。
+      valid.push({...r,store:configuredStore||r.store});
     }
 
-    // 一部に壊れた行があっても、正常な売上行が1件以上あれば店舗同期は継続する。
     return {
       ok:valid.length>0,
       valid,
