@@ -211,12 +211,19 @@ async function fetchStore(store,midx){
   const mapping=C.detectSalesMapping(rows);
   const parsed=C.rowsToRecords(rows,mapping,store.name);
   const inspected=C.validateSalesRecords(parsed,store.name,C.localToday());
+
   if(!inspected.ok){
     const sample=inspected.invalid.slice(0,3).map(x=>`行${x.record._row}: ${x.reasons.join("/")}`).join("、");
-    throw new Error(`${store.name}: 売上データ検証失敗（有効 ${inspected.valid.length}/${inspected.total}）。${sample||"A=JAN / B=品番 / C=数量 / D=売上 / E=店舗 / F=日付 / H=商品名 を確認してください。"}`);
+    throw new Error(`${store.name}: 有効な売上データがありません。${sample||"A=JAN / B=品番 / C=数量 / D=売上 / E=店舗 / F=日付 を確認してください。"}`);
   }
+
   const normalized=inspected.valid.map(r=>({...r,store:store.name}));
-  return C.enrichWithMaster(normalized,midx);
+  return {
+    records:C.enrichWithMaster(normalized,midx),
+    ignored:inspected.ignored.length,
+    invalid:inspected.invalid,
+    total:inspected.total
+  };
 }
 async function syncAll(options={}){
   await repairSavedSalesData();
@@ -224,12 +231,46 @@ async function syncAll(options={}){
   $("refreshBtn").disabled=true;updateStatus(options.silent?"自動更新中…":"同期中…");
   try{
     const midx=await masterIndex(),results=await Promise.allSettled(state.config.stores.map(s=>fetchStore(s,midx)));let total=0,errors=[],updated=[];
-    for(let i=0;i<results.length;i++){const r=results[i],s=state.config.stores[i];if(r.status==="rejected"){errors.push(r.reason.message);continue;}
-      await BMMDB.replaceStoreRange(s.name,r.value);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"売上",store:s.name,rows:r.value.length});total+=r.value.length;updated.push(`${s.name} ${r.value.length}行`);}
+    const warnings=[];
+    for(let i=0;i<results.length;i++){
+      const r=results[i],s=state.config.stores[i];
+      if(r.status==="rejected"){
+        errors.push(r.reason.message);
+        continue;
+      }
+
+      const payload=r.value;
+      await BMMDB.replaceStoreRange(s.name,payload.records);
+      await BMMDB.addSyncLog({
+        syncedAt:new Date().toISOString(),
+        type:"売上",
+        store:s.name,
+        rows:payload.records.length,
+        ignored:payload.ignored,
+        invalid:payload.invalid.length
+      });
+
+      total+=payload.records.length;
+      updated.push(`${s.name} ${payload.records.length}行`);
+
+      if(payload.ignored||payload.invalid.length){
+        warnings.push(
+          `${s.name}: ${payload.records.length}行取込 / 空行等${payload.ignored}行無視 / 不正${payload.invalid.length}行除外`
+        );
+      }
+    }
     if(!total)throw new Error(errors.join("\n")||"データを取得できません。");
     const cut=C.cutoffDateForYears(C.localToday(),3);await BMMDB.pruneBefore(cut);
     state.lastSynced=new Date().toISOString();await BMMDB.setMeta("lastSynced",state.lastSynced);await loadState();renderAll();
-    updateStatus(errors.length?`一部失敗 ${errors.length}店舗 / ${updated.join("・")}`:`${total}行更新（${updated.join("・")}）`);if(errors.length&&!options.silent)alert(errors.join("\n"));
+    if(errors.length){
+      updateStatus(`一部失敗 ${errors.length}店舗 / ${updated.join("・")}`);
+      if(!options.silent) alert(errors.join("\n"));
+    }else if(warnings.length){
+      updateStatus(`${total}行更新（${updated.join("・")}）`);
+      if(!options.silent) alert(`同期完了\n\n${warnings.join("\n")}`);
+    }else{
+      updateStatus(`${total}行更新（${updated.join("・")}）`);
+    }
   }catch(e){updateStatus(`更新失敗：${String(e.message||e).slice(0,80)}`);if(!options.silent)alert(e.message);else console.error(e);}
   finally{$("refreshBtn").disabled=false;}
 }

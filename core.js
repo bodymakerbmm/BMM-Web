@@ -151,8 +151,20 @@
   }
 
   function inspectSalesRecords(records,configuredStore,today=localToday()){
-    const valid=[],invalid=[];
+    const valid=[],invalid=[],ignored=[];
+
     for(const r of records){
+      const hasId=Boolean(r.jan||r.sku);
+      const hasQty=Number.isFinite(r.qty);
+      const hasSales=Number.isFinite(r.sales);
+
+      // 店舗名・日付だけが残っている行、完全空行に近い行は売上ではないため無視する。
+      // 例: 堺の163/164行のように E/F列だけが入っている行。
+      if(!hasId && !hasQty && !hasSales){
+        ignored.push(r);
+        continue;
+      }
+
       const reasons=[];
       if(r.jan&&!/^\d{8,14}$/.test(r.jan)) reasons.push("JAN");
       if(!r.jan&&!r.sku) reasons.push("商品ID");
@@ -160,10 +172,19 @@
       if(!Number.isFinite(r.sales)||Math.abs(r.sales)>1000000000) reasons.push("売上");
       if(!r.date||!isDateInAllowedRange(r.date,today,10,0)) reasons.push("日付");
       if(configuredStore&&normalizeText(r.store)!==normalizeText(configuredStore)) reasons.push("店舗");
+
       (reasons.length?invalid:valid).push(reasons.length?{record:r,reasons}:r);
     }
-    const total=records.length,ratio=total?valid.length/total:0;
-    return {ok:valid.length>0&&ratio>=0.98,valid,invalid,total,ratio};
+
+    // 一部に壊れた行があっても、正常な売上行が1件以上あれば店舗同期は継続する。
+    return {
+      ok:valid.length>0,
+      valid,
+      invalid,
+      ignored,
+      total:records.length,
+      ratio:records.length?valid.length/records.length:0
+    };
   }
 
   function isPlausibleSalesRecord(r,today=localToday()){
