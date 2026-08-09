@@ -274,6 +274,9 @@
   }
 
   function allocateShelfSales(salesRecords,shelfRows,exclude=EXCLUDED_SHELVES){
+    // 2.2.4: 1件の売上数量を複数棚へ比率配賦すると「売れ数」が小数になるため廃止。
+    // 同一JANが複数棚に存在する場合は、DAT1数量が最も多い棚を主棚として1棚だけに帰属させる。
+    // 同数なら、DAT1内で後に現れた行（より新しい記録）を優先する。
     exclude=parseExcludedShelves(exclude);
     const shelfMap=new Map();
     for(const r of shelfRows){
@@ -281,20 +284,35 @@
       const key=[normalizeText(r.store),normalizeText(r.jan)].join("|");
       if(!shelfMap.has(key))shelfMap.set(key,[]);shelfMap.get(key).push(r);
     }
-    const result=[];let matchedSales=0,totalSales=salesRecords.reduce((s,r)=>s+r.sales,0);
+    const result=[];
+    let matchedSales=0,matchedQty=0,matchedRows=0,excludedSales=0,excludedQty=0,excludedRows=0;
+    const totalSales=salesRecords.reduce((s,r)=>s+r.sales,0),totalQty=salesRecords.reduce((s,r)=>s+r.qty,0);
     for(const sale of salesRecords){
       if(!sale.jan)continue;
       const key=[normalizeText(sale.store),normalizeText(sale.jan)].join("|"),allRows=shelfMap.get(key)||[];
       if(!allRows.length)continue;
-      const included=allRows.filter(r=>!exclude.has(String(r.shelf)));if(!included.length)continue;
-      const qtyTotal=included.reduce((s,r)=>s+Math.max(0,Number(r.qty)||0),0),divisor=qtyTotal>0?qtyTotal:included.length;
-      matchedSales+=sale.sales;
-      for(const r of included){
-        const weight=qtyTotal>0?Math.max(0,Number(r.qty)||0)/divisor:1/divisor;
-        result.push({store:sale.store,date:sale.date,shelf:r.shelf,jan:sale.jan,sku:sale.sku,name:sale.name,qty:sale.qty*weight,sales:sale.sales*weight});
+
+      // 同一棚のDAT1行をまとめ、棚ごとの数量合計で主棚を決める。
+      const byShelf=new Map();
+      allRows.forEach((r,idx)=>{
+        const sh=String(r.shelf).trim();
+        const x=byShelf.get(sh)||{shelf:sh,qty:0,lastIndex:-1};
+        x.qty+=Math.max(0,Number(r.qty)||0);x.lastIndex=idx;byShelf.set(sh,x);
+      });
+      const candidates=[...byShelf.values()].sort((a,b)=>(b.qty-a.qty)||(b.lastIndex-a.lastIndex));
+      const primary=candidates[0];
+      if(!primary)continue;
+
+      // JAN自体は棚データに存在するが、主棚が除外棚なら分析表には載せない。
+      if(exclude.has(primary.shelf)){
+        excludedSales+=sale.sales;excludedQty+=sale.qty;excludedRows++;continue;
       }
+      matchedSales+=sale.sales;matchedQty+=sale.qty;matchedRows++;
+      result.push({store:sale.store,date:sale.date,shelf:primary.shelf,jan:sale.jan,sku:sale.sku,name:sale.name,qty:sale.qty,sales:sale.sales});
     }
-    return {records:result,matchedSales,totalSales,coverage:totalSales?matchedSales/totalSales:0};
+    const eligibleSales=Math.max(0,totalSales-excludedSales),eligibleQty=Math.max(0,totalQty-excludedQty),eligibleRows=Math.max(0,salesRecords.length-excludedRows);
+    return {records:result,matchedSales,matchedQty,matchedRows,excludedSales,excludedQty,excludedRows,totalSales,totalQty,totalRows:salesRecords.length,
+      coverage:eligibleSales?matchedSales/eligibleSales:0,qtyCoverage:eligibleQty?matchedQty/eligibleQty:0,rowCoverage:eligibleRows?matchedRows/eligibleRows:0};
   }
 
   function findHeaderRow(rows,requiredGroups,limit=15){

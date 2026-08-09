@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="2.2.3", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="2.2.4", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -133,7 +133,7 @@ function shelfSnapshotForDate(storeName,saleDate){
 function renderShelves(sales){
   const filter={store:$("storeFilter").value};
   const configuredStores=new Map(state.config.stores.map(s=>[s.name,s]));
-  let allocated=[],matchedSales=0,totalSales=sales.reduce((sum,r)=>sum+r.sales,0);
+  let allocated=[],matchedSales=0,excludedSales=0,totalSales=sales.reduce((sum,r)=>sum+r.sales,0);
   const targetStores=filter.store?[filter.store]:[...new Set(sales.map(r=>r.store).filter(Boolean))];
 
   for(const storeName of targetStores){
@@ -153,10 +153,13 @@ function renderShelves(sales){
       const result=C.allocateShelfSales(g.sales,g.rows,C.parseExcludedShelves(exclusion));
       allocated.push(...result.records);
       matchedSales+=result.matchedSales;
+      excludedSales+=result.excludedSales||0;
     }
   }
 
-  const coverage=totalSales?matchedSales/totalSales:0;
+  // 除外棚に帰属した売上は、意図的に分析対象外なので照合率の分母から除く。
+  const eligibleSales=Math.max(0,totalSales-excludedSales);
+  const coverage=eligibleSales?matchedSales/eligibleSales:0;
   const agg=C.aggregateBy(allocated,"shelf").sort((a,b)=>b.sales-a.sales);
   const topByShelf=new Map();
   for(const r of allocated){
@@ -180,7 +183,7 @@ function renderShelves(sales){
     agg.map((x,i)=>{
       const tops=[...(topByShelf.get(String(x.key))||new Map()).values()].sort((a,b)=>b.sales-a.sales).slice(0,3)
         .map(p=>`${p.name}${p.sku?`（${p.sku}）`:""}`).join(" / ");
-      return [num(i+1),esc(x.key),yen(x.sales),num(Math.round(x.qty*100)/100),num(x.productCount),yen(x.qty?x.sales/x.qty:0),esc(tops)];
+      return [num(i+1),esc(x.key),yen(x.sales),num(Math.round(x.qty)),num(x.productCount),yen(x.qty?x.sales/x.qty:0),esc(tops)];
     })
   );
 }
