@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="3.0.0", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="3.0.1", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -9,7 +9,8 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const DEFAULT_STORES=[
   {name:"東大阪店",url:"https://docs.google.com/spreadsheets/d/1GYGlpQv95bRDOHRAexdPb6tciBzhPItBPY5YcSYi6UE/edit?gid=1770925758#gid=1770925758",excludedShelves:""},
   {name:"ららぽーと堺店",url:"https://docs.google.com/spreadsheets/d/1fb5XVcmwpqi-MOFifStk39Rr5fUzU0b7/edit?gid=465268523#gid=465268523",excludedShelves:""},
-  {name:"江坂店",url:"https://docs.google.com/spreadsheets/d/1LSpa6rt6c9ZOEzT5oRVDElYqNcULDKSK/edit?gid=465268523#gid=465268523",excludedShelves:""}
+  {name:"江坂店",url:"https://docs.google.com/spreadsheets/d/1LSpa6rt6c9ZOEzT5oRVDElYqNcULDKSK/edit?gid=465268523#gid=465268523",excludedShelves:""},
+  {name:"名古屋店",url:"https://docs.google.com/spreadsheets/d/1RzZZYlUH57LDG_4ReDZnCVR2koPaEU1r2KEbdQv8gZI/edit?gid=0#gid=0",excludedShelves:""}
 ];
 const COMMON_DATA_SPREADSHEET_ID="1ZYzmDyYK2Oj8zGBsmb2EloI2jWHvFuXLj49pB5goWtw";
 const COMMON_MASTER_GID="0";
