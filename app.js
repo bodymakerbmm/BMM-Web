@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="2.3.0", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="2.3.1", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -350,13 +350,23 @@ async function fetchCsvRows(url,label){
   const text=await res.text();if(/<!doctype html|<html/i.test(text))throw new Error(`${label}: 共有設定またはURLを確認してください。`);return C.parseCSV(text);
 }
 async function masterIndex(){
+  // Version 2.3.1:
+  // 商品マスタの正本は共通BMMスプレッドシート「商品マスタ」タブ。
+  // 旧ブラウザ設定 commonMasterUrl が残っていても、共通マスタを上書きしない。
+  if(state.masterRows.length)return C.buildMasterIndex(state.masterRows);
+
+  // 共通同期が一時的に失敗し、端末にも保存マスタが無い場合だけ旧URLを予備利用。
   if(state.config.commonMasterUrl){
-    const rows=await fetchCsvRows(state.config.commonMasterUrl,"商品マスタ");
+    const rows=await fetchCsvRows(state.config.commonMasterUrl,"商品マスタ（予備）");
     const records=C.masterRowsToRecords(rows);
-    if(!records.length) throw new Error("商品マスタを判定できません。");
-    await BMMDB.replaceMaster(records);await persistMasterSnapshot(records);state.masterRows=records;return C.buildMasterIndex(records);
+    if(records.length){
+      await BMMDB.replaceMaster(records);
+      await persistMasterSnapshot(records);
+      state.masterRows=records;
+      return C.buildMasterIndex(records);
+    }
   }
-  return state.masterRows.length?C.buildMasterIndex(state.masterRows):null;
+  return null;
 }
 async function fetchStore(store,midx){
   const rows=await fetchCsvRows(store.url,`${store.name} 売上`);
@@ -385,6 +395,7 @@ async function syncCommonMasterAndShelves(){
   if(masterRecords.length){
     await BMMDB.replaceMaster(masterRecords);
     await persistMasterSnapshot(masterRecords);
+    state.masterRows=masterRecords;
     masterCount=masterRecords.length;
   }
 
