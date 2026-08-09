@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="2.3.3", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="3.0.0", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -195,7 +195,7 @@ function renderAll(){
   $("totalSales").textContent=yen(k.sales);$("totalQty").textContent=num(k.qty);$("productCount").textContent=num(k.productCount);$("avgPrice").textContent=yen(k.avgPrice);
   $("topProducts").innerHTML=products.slice(0,10).map((p,i)=>`<div class="rank"><span class="rank-no">${i+1}</span><div class="rank-main">${esc(p.name)}<small>${esc(p.sku||p.jan)} / ${num(p.qty)}点</small></div><div class="rank-value">${yen(p.sales)}</div></div>`).join("")||'<div class="empty">データなし</div>';
   $("storeSummary").innerHTML=stores.map((s,i)=>`<div class="rank"><span class="rank-no">${i+1}</span><div class="rank-main">${esc(s.key)}<small>${num(s.qty)}点 / ${num(s.productCount)}商品</small></div><div class="rank-value">${yen(s.sales)}</div></div>`).join("")||'<div class="empty">データなし</div>';
-  renderDaily(r);renderProducts(products);renderRanking(products);renderStores(stores);renderShelves(r);renderABC(r);renderStockSnapshots();renderStock();renderHistory();
+  renderDaily(r);renderProducts(products);renderRanking(products);renderStores(stores);renderShelves(r);renderABC(r);renderStockSnapshots();renderStock();renderInventoryAlerts();renderOrderCandidates();renderKPIDetail();renderHistory();
   $("setupNotice").hidden=state.config.stores.length>0||state.records.length>0;updateStatus();
 }
 function renderDaily(records){
@@ -322,6 +322,118 @@ function renderStock(){
   const list=[...grouped.values()].map(x=>{const key=C.normalizeText(x.jan),p=periodMap.get(key)||{qty:0,sales:0},h=historyMap.get(key);return{...x,qty:p.qty||0,sales:p.sales||0,hasHistory:Boolean(h)};}).filter(x=>x.stock!==0||x.hasHistory).sort((a,b)=>(b.qty-a.qty)||(b.sales-a.sales)||(b.stock-a.stock));
   $("stockTable").innerHTML=table([{label:"順位"},{label:"商品名"},{label:"品番"},{label:"JAN"},{label:"期間売れ数",num:true},{label:"期間売上",num:true},{label:"現在庫",num:true},{label:"在庫状況"}],list.map((x,i)=>{const status=x.stock<=0?"在庫0":x.qty>0&&x.stock<x.qty?"少なめ":"在庫あり";return[num(i+1),esc(x.name),esc(x.sku),esc(x.jan),num(x.qty),yen(x.sales),num(x.stock),esc(status)];}));
 }
+
+function currentInventoryProductRows(){
+  const date=$("stockSnapshotSelect").value||C.latestSnapshotDate(state.stockRows);
+  const store=$("storeFilter").value;
+  const stockRows=state.stockRows.filter(r=>r.snapshotDate===date&&(!store||r.store===store));
+  const periodProducts=C.aggregateProducts(state.filtered);
+  const historyProducts=C.aggregateProducts(state.records.filter(r=>!store||r.store===store));
+
+  const periodMap=new Map(),historyMap=new Map(),masterByJan=new Map(),stockMap=new Map();
+  for(const p of periodProducts)if(p.jan)periodMap.set(C.normalizeText(p.jan),p);
+  for(const p of historyProducts)if(p.jan)historyMap.set(C.normalizeText(p.jan),p);
+  for(const m of state.masterRows)if(m.jan)masterByJan.set(C.normalizeText(m.jan),m);
+  for(const r of stockRows){
+    const k=C.normalizeText(r.jan||r.sku);if(!k)continue;
+    const x=stockMap.get(k)||{stock:0,stores:new Set(),jan:r.jan,sku:r.sku,name:r.name};
+    x.stock+=Number(r.stock)||0;x.stores.add(r.store);stockMap.set(k,x);
+  }
+
+  const keys=new Set([...periodMap.keys(),...historyMap.keys(),...stockMap.keys()]);
+  const out=[];
+  for(const k of keys){
+    const p=periodMap.get(k)||{qty:0,sales:0,jan:"",sku:"",name:""};
+    const h=historyMap.get(k);
+    const st=stockMap.get(k)||{stock:0,stores:new Set(),jan:"",sku:"",name:""};
+    const m=masterByJan.get(k);
+    const stock=Number(st.stock)||0,qty=Number(p.qty)||0,sales=Number(p.sales)||0;
+    if(stock===0&&!h)continue;
+    out.push({
+      key:k,jan:p.jan||st.jan||m?.jan||"",sku:m?.sku||p.sku||st.sku||"",
+      name:m?.name||p.name||st.name||"（商品名未登録）",
+      qty,sales,stock,signal:C.inventorySignal(qty,stock)
+    });
+  }
+  return out;
+}
+
+function renderInventoryAlerts(){
+  const rows=currentInventoryProductRows().filter(x=>x.signal.level>0)
+    .sort((a,b)=>(b.signal.level-a.signal.level)||(b.qty-a.qty)||(b.sales-a.sales)||(b.stock-a.stock));
+
+  const counts={stockout:0,low:0,stagnant:0,excess:0};
+  for(const x of rows)counts[x.signal.key]=(counts[x.signal.key]||0)+1;
+  $("alertSummary").innerHTML=[
+    ["欠品",counts.stockout],["在庫少",counts.low],["滞留",counts.stagnant],["在庫過多",counts.excess]
+  ].map(x=>`<div class="mini-kpi"><span>${x[0]}</span><strong>${num(x[1])}</strong></div>`).join("");
+
+  $("alertTable").innerHTML=table(
+    [{label:"優先"},{label:"商品名"},{label:"品番"},{label:"JAN"},{label:"期間売れ数",num:true},{label:"期間売上",num:true},{label:"現在庫",num:true}],
+    rows.map(x=>[
+      `<span class="signal signal-${x.signal.key}">${esc(x.signal.label)}</span>`,
+      esc(x.name),esc(x.sku),esc(x.jan),num(x.qty),yen(x.sales),num(x.stock)
+    ])
+  );
+}
+
+function renderOrderCandidates(){
+  const periodDays=Math.max(1,C.dateSpanDays(state.filtered));
+  const rows=currentInventoryProductRows().map(x=>{
+    const r=C.reorderSuggestion(x.qty,x.stock,periodDays,2);
+    return {...x,...r};
+  }).filter(x=>x.orderQty>0&&x.qty>0)
+    .sort((a,b)=>(b.orderQty-a.orderQty)||(b.weeklyQty-a.weeklyQty)||(b.sales-a.sales));
+
+  const totalUnits=rows.reduce((s,x)=>s+x.orderQty,0);
+  const stockouts=rows.filter(x=>x.stock<=0).length;
+  $("orderSummary").innerHTML=[
+    ["候補商品",rows.length],["推奨発注数合計",totalUnits],["うち欠品",stockouts],["計算期間",`${periodDays}日`]
+  ].map(x=>`<div class="mini-kpi"><span>${x[0]}</span><strong>${typeof x[1]==="number"?num(x[1]):esc(x[1])}</strong></div>`).join("");
+
+  $("orderTable").innerHTML=table(
+    [{label:"順位"},{label:"商品名"},{label:"品番"},{label:"JAN"},{label:"期間売れ数",num:true},{label:"週換算売れ数",num:true},{label:"現在庫",num:true},{label:"目標在庫",num:true},{label:"発注候補",num:true}],
+    rows.map((x,i)=>[
+      num(i+1),esc(x.name),esc(x.sku),esc(x.jan),num(x.qty),x.weeklyQty.toFixed(1),num(x.stock),num(x.target),`<strong>${num(x.orderQty)}</strong>`
+    ])
+  );
+}
+
+function kpiDeltaClass(v){return v===null||Math.abs(v)<0.0001?"delta-flat":v>0?"delta-up":"delta-down";}
+function kpiDeltaText(v){return v===null?"比較不可":`${v>=0?"+":""}${(v*100).toFixed(1)}%`; }
+
+function renderKPIDetail(){
+  const current=state.filtered;
+  const store=$("storeFilter").value;
+  const range=C.previousPeriodRange(current);
+  const previous=range.days?C.filterRecords(state.records,{store,from:range.from,to:range.to}):[];
+  const now=C.kpis(current),prev=C.kpis(previous);
+  const delta=(a,b)=>b===0?(a===0?0:null):(a-b)/b;
+
+  const cards=[
+    ["売上",yen(now.sales),delta(now.sales,prev.sales)],
+    ["売れ数",num(now.qty),delta(now.qty,prev.qty)],
+    ["平均単価",yen(now.avgPrice),delta(now.avgPrice,prev.avgPrice)],
+    ["商品種類",num(now.productCount),delta(now.productCount,prev.productCount)]
+  ];
+  $("kpiDetailCards").innerHTML=cards.map(x=>`<div class="kpi-detail-card"><span>${x[0]}</span><strong>${x[1]}</strong><small class="${kpiDeltaClass(x[2])}">前期間比 ${kpiDeltaText(x[2])}</small></div>`).join("");
+
+  const inv=currentInventoryProductRows(),stockouts=inv.filter(x=>x.signal.key==="stockout").length,lows=inv.filter(x=>x.signal.key==="low").length,excess=inv.filter(x=>x.signal.key==="excess"||x.signal.key==="stagnant").length;
+  $("kpiInventory").innerHTML=[
+    ["欠品商品",stockouts],["在庫少",lows],["滞留・過多",excess],["在庫対象商品",inv.length]
+  ].map(x=>`<div class="history-stat"><span>${x[0]}</span><strong>${num(x[1])}</strong></div>`).join("");
+
+  const abc=C.abcAnalysis(current),aSales=abc.filter(x=>x.rank==="A").reduce((s,x)=>s+x.sales,0),total=now.sales;
+  const top=C.aggregateProducts(current).sort((a,b)=>b.sales-a.sales)[0];
+  const storeRank=C.aggregateBy(current,"store").sort((a,b)=>b.sales-a.sales)[0];
+  $("kpiComposition").innerHTML=[
+    ["Aランク売上比",total?`${(aSales/total*100).toFixed(1)}%`:"0.0%"],
+    ["売上1位商品",top?`${esc(top.name)} / ${yen(top.sales)}`:"データなし"],
+    ["売上1位店舗",storeRank?`${esc(storeRank.key)} / ${yen(storeRank.sales)}`:"データなし"],
+    ["前期間",range.days?`${range.from} ～ ${range.to}`:"比較データなし"]
+  ].map(x=>`<div class="history-stat"><span>${x[0]}</span><strong>${x[1]}</strong></div>`).join("");
+}
+
 function renderHistory(){
   const sr=C.dataRange(state.records),sh=C.dataRange(state.shelfRows),stockDates=[...new Set(state.stockRows.map(r=>r.snapshotDate))].filter(Boolean).sort();
   $("historySummary").innerHTML=[

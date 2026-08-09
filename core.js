@@ -239,6 +239,45 @@
     return {a:A,b:B,delta:{sales:d(A.sales,B.sales),qty:d(A.qty,B.qty),productCount:d(A.productCount,B.productCount),avgPrice:d(A.avgPrice,B.avgPrice)}};
   }
 
+  function dateSpanDays(records){
+    const dates=records.map(r=>r.date).filter(Boolean).sort();
+    if(!dates.length) return 0;
+    const a=new Date(`${dates[0]}T00:00:00`),b=new Date(`${dates[dates.length-1]}T00:00:00`);
+    return Math.max(1,Math.round((b-a)/86400000)+1);
+  }
+
+  function shiftDate(date,days){
+    const p=parseDate(date);if(!p)return "";
+    const d=new Date(`${p}T00:00:00`);
+    d.setDate(d.getDate()+days);
+    return localToday(d);
+  }
+
+  function previousPeriodRange(records){
+    const dates=records.map(r=>r.date).filter(Boolean).sort();
+    if(!dates.length) return {from:"",to:"",days:0};
+    const from=dates[0],to=dates[dates.length-1],days=dateSpanDays(records);
+    return {from:shiftDate(from,-days),to:shiftDate(from,-1),days};
+  }
+
+  function inventorySignal(qty,stock){
+    qty=Number(qty)||0;stock=Number(stock)||0;
+    if(qty>0 && stock<=0) return {level:4,key:"stockout",label:"欠品"};
+    if(qty>0 && stock<qty) return {level:3,key:"low",label:"在庫少"};
+    if(qty===0 && stock>=5) return {level:2,key:"stagnant",label:"滞留"};
+    if(qty>0 && stock>=Math.max(10,qty*4)) return {level:1,key:"excess",label:"在庫過多"};
+    return {level:0,key:"ok",label:"適正"};
+  }
+
+  function reorderSuggestion(qty,stock,periodDays,coverWeeks=2){
+    qty=Math.max(0,Number(qty)||0);stock=Math.max(0,Number(stock)||0);
+    periodDays=Math.max(1,Number(periodDays)||1);
+    const weeklyQty=qty/periodDays*7;
+    const target=Math.ceil(weeklyQty*coverWeeks);
+    const orderQty=Math.max(0,target-stock);
+    return {weeklyQty,target,orderQty};
+  }
+
   function matchesSearch(r,q){
     const terms=normalizeText(q).split(" ").filter(Boolean);if(!terms.length)return true;
     const hay=normalizeText([r.jan,r.sku,r.name].join(" "));return terms.every(t=>hay.includes(t));
@@ -443,7 +482,7 @@
   return {
     EXCLUDED_SHELVES,SALES_SCHEMA,normalizeText,localToday,parseNumber,parseStrictNumber,normalizeCode,parseDate,isDateInAllowedRange,parseCSV,colToIndex,indexToCol,
     sheetUrlToCsv,detectSalesMapping,rowsToRecords,inspectSalesRecords,isPlausibleSalesRecord,validateSalesRecords,productKey,recordKey,
-    filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods,matchesSearch,dataRange,cutoffDateForYears,maxRecordDate,
+    filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods,dateSpanDays,shiftDate,previousPeriodRange,inventorySignal,reorderSuggestion,matchesSearch,dataRange,cutoffDateForYears,maxRecordDate,
     parseShelfText,parseShelfGridRows,shelfRowKey,parseExcludedShelves,allocateShelfSales,detectMasterLayout,masterRowsToRecords,buildMasterIndex,enrichWithMaster,
     inferDateFromFilename,detectInventoryLayout,inventoryRowsToRecords,compactInventoryRecords,stockRowKey,latestSnapshotDate
   };

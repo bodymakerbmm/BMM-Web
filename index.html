@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="BODYMAKER BMM Web - 店舗売上・棚・在庫分析">
-<title>BMM Web Version 2.3.3</title>
+<title>BMM Web Version 3.0.0</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
-  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 2.3.3</small></h1><p>店舗売上・棚・在庫分析</p></div>
+  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 3.0.0</small></h1><p>店舗売上・棚・在庫分析</p></div>
   <div class="top-actions">
     <span id="syncStatus" class="status">起動確認中…</span>
     <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
@@ -38,7 +38,7 @@
 <button class="tab active" data-tab="dashboard">ダッシュボード</button><button class="tab" data-tab="products">商品検索</button>
 <button class="tab" data-tab="ranking">ランキング</button><button class="tab" data-tab="stores">店舗比較</button>
 <button class="tab" data-tab="shelves">棚別分析</button><button class="tab" data-tab="abc">ABC分析</button>
-<button class="tab" data-tab="period">期間比較</button><button class="tab" data-tab="stock">在庫</button><button class="tab" data-tab="history">保存履歴</button>
+<button class="tab" data-tab="period">期間比較</button><button class="tab" data-tab="stock">在庫</button><button class="tab new-feature" data-tab="alerts">在庫アラート</button><button class="tab new-feature" data-tab="orders">発注候補</button><button class="tab new-feature" data-tab="kpidetail">KPI</button><button class="tab" data-tab="history">保存履歴</button>
 </nav>
 
 <section id="dashboard" class="tab-panel active">
@@ -70,6 +70,37 @@
 <div class="stock-toolbar"><label>在庫基準日<select id="stockSnapshotSelect"></select></label><span id="stockSnapshotInfo" class="muted"></span></div>
 <p class="muted">月曜朝（日曜営業終了時点）の全店舗在庫Excelを取り込んだ基準在庫です。在庫0かつ販売実績がない商品は表示せず、選択期間の売れ数が多い商品から表示します。</p>
 <div id="stockTable"></div></article></section>
+
+
+<section id="alerts" class="tab-panel">
+  <article class="card">
+    <h2>在庫アラート</h2>
+    <p class="muted">選択中の店舗・期間の売れ数と最新在庫を比較します。欠品 → 在庫少 → 滞留 → 在庫過多の順に優先表示します。</p>
+    <div class="mini-kpis" id="alertSummary"></div>
+    <div id="alertTable"></div>
+  </article>
+</section>
+
+<section id="orders" class="tab-panel">
+  <article class="card">
+    <h2>発注候補</h2>
+    <p class="muted">選択期間の販売ペースを7日換算し、約2週間分を目標在庫として簡易発注数を算出します。最終発注判断は店舗状況・入荷予定を確認してください。</p>
+    <div class="mini-kpis" id="orderSummary"></div>
+    <div id="orderTable"></div>
+  </article>
+</section>
+
+<section id="kpidetail" class="tab-panel">
+  <article class="card">
+    <h2>KPIダッシュボード</h2>
+    <p class="muted">現在選択している店舗・期間を、直前の同じ日数の期間と比較します。</p>
+    <div class="kpi-detail-grid" id="kpiDetailCards"></div>
+    <div class="grid-2 kpi-extra">
+      <article class="subcard"><h3>在庫KPI</h3><div id="kpiInventory"></div></article>
+      <article class="subcard"><h3>売上構成</h3><div id="kpiComposition"></div></article>
+    </div>
+  </article>
+</section>
 
 <section id="history" class="tab-panel"><div class="grid-2">
 <article class="card"><h2>保存データ</h2><div id="historySummary"></div></article>
