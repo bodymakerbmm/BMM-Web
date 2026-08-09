@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="2.2.4", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="2.2.5", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -12,6 +12,105 @@ const DEFAULT_STORES=[
   {name:"江坂店",url:"https://docs.google.com/spreadsheets/d/1LSpa6rt6c9ZOEzT5oRVDElYqNcULDKSK/edit?gid=465268523#gid=465268523",excludedShelves:""}
 ];
 let state={config:{stores:[...DEFAULT_STORES],commonMasterUrl:""},records:[],filtered:[],shelfRows:[],shelfHistory:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
+
+const PERSIST_CACHE="bmm-persistent-data-v1";
+const PERSIST_KEYS={
+  master:"/bmm-persist/master.json",
+  shelf:"/bmm-persist/shelf.json",
+  shelfHistory:"/bmm-persist/shelf-history.json"
+};
+
+async function requestPersistentStorage(){
+  try{
+    if(navigator.storage?.persist){
+      await navigator.storage.persist();
+    }
+  }catch(e){console.warn("persistent storage request failed",e);}
+}
+
+async function cacheWriteJson(path,data){
+  if(!("caches" in window)) return false;
+  try{
+    const cache=await caches.open(PERSIST_CACHE);
+    await cache.put(path,new Response(JSON.stringify(data),{
+      headers:{"Content-Type":"application/json","Cache-Control":"no-store"}
+    }));
+    return true;
+  }catch(e){
+    console.warn("cacheWriteJson failed",path,e);
+    return false;
+  }
+}
+
+async function cacheReadJson(path){
+  if(!("caches" in window)) return null;
+  try{
+    const cache=await caches.open(PERSIST_CACHE);
+    const res=await cache.match(path);
+    return res?await res.json():null;
+  }catch(e){
+    console.warn("cacheReadJson failed",path,e);
+    return null;
+  }
+}
+
+async function persistMasterSnapshot(records){
+  await cacheWriteJson(PERSIST_KEYS.master,{version:1,savedAt:new Date().toISOString(),records});
+}
+
+async function persistShelfSnapshots(){
+  await cacheWriteJson(PERSIST_KEYS.shelf,{version:1,savedAt:new Date().toISOString(),records:state.shelfRows});
+  await cacheWriteJson(PERSIST_KEYS.shelfHistory,{version:1,savedAt:new Date().toISOString(),records:state.shelfHistory});
+}
+
+async function restorePersistentReferenceData(){
+  let restored=false;
+
+  let masters=await BMMDB.getAll(BMMDB.stores.master);
+  if(!masters.length){
+    const cached=await cacheReadJson(PERSIST_KEYS.master);
+    if(Array.isArray(cached?.records)&&cached.records.length){
+      await BMMDB.replaceMaster(cached.records);
+      restored=true;
+    }
+  }
+
+  let shelves=await BMMDB.getAll(BMMDB.stores.shelf);
+  if(!shelves.length){
+    const cached=await cacheReadJson(PERSIST_KEYS.shelf);
+    if(Array.isArray(cached?.records)&&cached.records.length){
+      const byStore=new Map();
+      for(const r of cached.records){
+        const k=r.store||"未設定";
+        if(!byStore.has(k))byStore.set(k,[]);
+        byStore.get(k).push(r);
+      }
+      for(const [store,rows] of byStore) await BMMDB.replaceShelfDates(store,rows);
+      restored=true;
+    }
+  }
+
+  let history=await BMMDB.getAll(BMMDB.stores.shelfHistory);
+  if(!history.length){
+    const cached=await cacheReadJson(PERSIST_KEYS.shelfHistory);
+    if(Array.isArray(cached?.records)&&cached.records.length){
+      const groups=new Map();
+      for(const r of cached.records){
+        const k=[r.store||"未設定",r.effectiveFrom||""].join("|");
+        if(!groups.has(k))groups.set(k,[]);
+        groups.get(k).push(r);
+      }
+      for(const [key,rows] of groups){
+        const pos=key.indexOf("|");
+        const store=key.slice(0,pos),effectiveFrom=key.slice(pos+1);
+        if(effectiveFrom) await BMMDB.replaceShelfSnapshot(store,effectiveFrom,rows);
+      }
+      restored=true;
+    }
+  }
+  return restored;
+}
+
 
 function table(headers,rows){
   if(!rows.length)return '<div class="empty">表示できるデータがありません。</div>';
@@ -241,7 +340,7 @@ async function masterIndex(){
     const rows=await fetchCsvRows(state.config.commonMasterUrl,"商品マスタ");
     const records=C.masterRowsToRecords(rows);
     if(!records.length) throw new Error("商品マスタを判定できません。");
-    await BMMDB.replaceMaster(records);state.masterRows=records;return C.buildMasterIndex(records);
+    await BMMDB.replaceMaster(records);await persistMasterSnapshot(records);state.masterRows=records;return C.buildMasterIndex(records);
   }
   return state.masterRows.length?C.buildMasterIndex(state.masterRows):null;
 }
@@ -358,7 +457,7 @@ async function rowsFromSpreadsheetFile(file,kind="generic"){
 async function importMasterFile(){
   const f=$("masterFileInput").files[0];if(!f){$("commonDataMessage").textContent="ファイルを選択してください。";return;}
   try{const rows=/\.csv$/i.test(f.name)?C.parseCSV(await readTextSmart(f)):await rowsFromSpreadsheetFile(f,"master"),records=C.masterRowsToRecords(rows);if(!records.length)throw new Error("商品マスタを判定できません。");
-    await BMMDB.replaceMaster(records);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"商品マスタ",target:f.name,rows:records.length});await loadState();$("commonDataMessage").textContent=`${records.length}件取り込みました。`;renderAll();
+    await BMMDB.replaceMaster(records);await persistMasterSnapshot(records);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"商品マスタ",target:f.name,rows:records.length});await loadState();$("commonDataMessage").textContent=`${records.length}件取り込み・永続保存しました。`;renderAll();
   }catch(e){$("commonDataMessage").textContent=e.message;}
 }
 
@@ -375,8 +474,10 @@ async function importShelf(){
     await BMMDB.replaceShelfDates(store,rows);
     await BMMDB.replaceShelfSnapshot(store,effectiveFrom,rows);
     await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"棚データ",store,target:`有効開始 ${effectiveFrom}`,rows:rows.length});
-    await loadState();renderAll();
-    $("shelfImportMessage").textContent=`${effectiveFrom}以降の棚配置として ${rows.length}行保存しました。`;
+    await loadState();
+    await persistShelfSnapshots();
+    renderAll();
+    $("shelfImportMessage").textContent=`${effectiveFrom}以降の棚配置として ${rows.length}行を永続保存しました。`;
   }catch(e){$("shelfImportMessage").textContent=e.message;}
 }
 async function importStock(){
@@ -393,7 +494,7 @@ async function exportAll(){
 }
 async function importAll(file){
   const p=JSON.parse(await file.text());if(!["BMM-Web-V2","BMM-Web-V1","BMM-Web-History"].includes(p.format))throw new Error("BMMバックアップではありません。");
-  if(!confirm("現在の保存データをバックアップ内容で置き換えます。よろしいですか？"))return;await BMMDB.importAll(p);await repairSavedSalesData();await BMMDB.setMeta("salesSchemaVersion",SALES_SCHEMA_VERSION);await loadState();renderAll();alert("復元しました。");
+  if(!confirm("現在の保存データをバックアップ内容で置き換えます。よろしいですか？"))return;await BMMDB.importAll(p);await repairSavedSalesData();await BMMDB.setMeta("salesSchemaVersion",SALES_SCHEMA_VERSION);await loadState();if(state.masterRows.length)await persistMasterSnapshot(state.masterRows);await persistShelfSnapshots();renderAll();alert("復元しました。");
 }
 
 function bind(){
@@ -408,8 +509,10 @@ function bind(){
   document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab,.tab-panel").forEach(x=>x.classList.remove("active"));b.classList.add("active");$(b.dataset.tab).classList.add("active");});
 }
 async function start(){
+  await requestPersistentStorage();
   await migrateSalesSchema();
   await repairSavedSalesData();
+  await restorePersistentReferenceData();
   await loadState();
   bind();
   renderAll();
