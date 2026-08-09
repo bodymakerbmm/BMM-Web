@@ -258,6 +258,23 @@
   function maxRecordDate(records){const ds=records.map(r=>r.date).filter(Boolean).sort();return ds[ds.length-1]||"";}
 
   // DAT1 format: 1,1,S001,DATE,TIME,SHELF,JAN,QTY
+  function parseShelfGridRows(rows){
+    const out=[];
+    if(!Array.isArray(rows)||!rows.length)return out;
+    const headers=(rows[0]||[]).map(v=>String(v??"").trim());
+    for(let c=0;c<headers.length;c++){
+      const store=headers[c];
+      if(!store)continue;
+      for(let r=1;r<rows.length;r++){
+        const raw=String((rows[r]||[])[c]??"").trim();
+        if(!raw)continue;
+        const parsed=parseShelfText(raw,store);
+        for(const x of parsed)out.push({...x,store});
+      }
+    }
+    return out;
+  }
+
   function parseShelfText(text,storeName){
     return parseCSV(text).map((r,i)=>({
       store:storeName||String(r[2]||"").trim()||"未設定",storeCode:String(r[2]||"").trim(),date:parseDate(r[3]),time:String(r[4]||"").trim(),
@@ -413,7 +430,7 @@
     EXCLUDED_SHELVES,SALES_SCHEMA,normalizeText,localToday,parseNumber,parseStrictNumber,normalizeCode,parseDate,isDateInAllowedRange,parseCSV,colToIndex,indexToCol,
     sheetUrlToCsv,detectSalesMapping,rowsToRecords,inspectSalesRecords,isPlausibleSalesRecord,validateSalesRecords,productKey,recordKey,
     filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods,matchesSearch,dataRange,cutoffDateForYears,maxRecordDate,
-    parseShelfText,shelfRowKey,parseExcludedShelves,allocateShelfSales,detectMasterLayout,masterRowsToRecords,buildMasterIndex,enrichWithMaster,
+    parseShelfText,parseShelfGridRows,shelfRowKey,parseExcludedShelves,allocateShelfSales,detectMasterLayout,masterRowsToRecords,buildMasterIndex,enrichWithMaster,
     inferDateFromFilename,detectInventoryLayout,inventoryRowsToRecords,compactInventoryRecords,stockRowKey,latestSnapshotDate
   };
 });

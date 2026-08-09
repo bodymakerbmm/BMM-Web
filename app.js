@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="2.2.5", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="2.3.0", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -11,6 +11,10 @@ const DEFAULT_STORES=[
   {name:"ららぽーと堺店",url:"https://docs.google.com/spreadsheets/d/1fb5XVcmwpqi-MOFifStk39Rr5fUzU0b7/edit?gid=465268523#gid=465268523",excludedShelves:""},
   {name:"江坂店",url:"https://docs.google.com/spreadsheets/d/1LSpa6rt6c9ZOEzT5oRVDElYqNcULDKSK/edit?gid=465268523#gid=465268523",excludedShelves:""}
 ];
+const COMMON_DATA_SPREADSHEET_URL="https://docs.google.com/spreadsheets/d/1ZYzmDyYK2Oj8zGBsmb2EloI2jWHvFuXLj49pB5goWtw/edit?gid=0#gid=0";
+const COMMON_MASTER_SHEET_NAME="商品マスタ";
+const COMMON_SHELF_SHEET_NAME="棚番号";
+
 let state={config:{stores:[...DEFAULT_STORES],commonMasterUrl:""},records:[],filtered:[],shelfRows:[],shelfHistory:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
 
 const PERSIST_CACHE="bmm-persistent-data-v1";
@@ -331,6 +335,16 @@ function updateStatus(msg){
   $("syncStatus").textContent=msg||(state.lastSynced?`最終同期 ${new Date(state.lastSynced).toLocaleString("ja-JP")}`:"未同期");
 }
 
+async function fetchSheetTabRows(spreadsheetUrl,sheetName,label){
+  const m=String(spreadsheetUrl||"").match(/\/spreadsheets\/d\/([^/]+)/);
+  if(!m)throw new Error(`${label}: スプレッドシートURLを確認してください。`);
+  const id=m[1];
+  const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&headers=0`;
+  const res=await fetch(url,{cache:"no-store"});
+  if(!res.ok)throw new Error(`${label}: Googleスプレッドシートを取得できません（${res.status}）。`);
+  return C.parseCSV(await res.text());
+}
+
 async function fetchCsvRows(url,label){
   const res=await fetch(C.sheetUrlToCsv(url),{cache:"no-store"});if(!res.ok)throw new Error(`${label}: 読込失敗（${res.status}）`);
   const text=await res.text();if(/<!doctype html|<html/i.test(text))throw new Error(`${label}: 共有設定またはURLを確認してください。`);return C.parseCSV(text);
@@ -363,8 +377,49 @@ async function fetchStore(store,midx){
     total:inspected.total
   };
 }
+async function syncCommonMasterAndShelves(){
+  let masterCount=0,shelfCount=0;
+
+  const masterRows=await fetchSheetTabRows(COMMON_DATA_SPREADSHEET_URL,COMMON_MASTER_SHEET_NAME,"共通商品マスタ");
+  const masterRecords=C.masterRowsToRecords(masterRows);
+  if(masterRecords.length){
+    await BMMDB.replaceMaster(masterRecords);
+    await persistMasterSnapshot(masterRecords);
+    masterCount=masterRecords.length;
+  }
+
+  const shelfGrid=await fetchSheetTabRows(COMMON_DATA_SPREADSHEET_URL,COMMON_SHELF_SHEET_NAME,"共通棚データ");
+  const shelfRecords=C.parseShelfGridRows(shelfGrid);
+  if(shelfRecords.length){
+    const byStore=new Map();
+    for(const r of shelfRecords){
+      if(!r.store)continue;
+      if(!byStore.has(r.store))byStore.set(r.store,[]);
+      byStore.get(r.store).push(r);
+    }
+    const effectiveFrom=C.localToday();
+    for(const [store,rows] of byStore){
+      await BMMDB.replaceShelfDates(store,rows);
+      await BMMDB.replaceShelfSnapshot(store,effectiveFrom,rows);
+      shelfCount+=rows.length;
+    }
+    await loadState();
+    await persistShelfSnapshots();
+  }
+
+  await BMMDB.addSyncLog({
+    syncedAt:new Date().toISOString(),
+    type:"共通データ",
+    target:"商品マスタ・棚番号",
+    rows:masterCount+shelfCount
+  });
+  return {masterCount,shelfCount};
+}
+
 async function syncAll(options={}){
   await repairSavedSalesData();
+  let commonSync=null;
+  try{commonSync=await syncCommonMasterAndShelves();}catch(e){console.warn(e);if(!options.silent)alert(`共通データ同期失敗\n${e.message}`);}
   if(!state.config.stores.length){if(!options.silent)$("settingsDialog").showModal();updateStatus("店舗設定が必要です");return;}
   $("refreshBtn").disabled=true;updateStatus(options.silent?"自動更新中…":"同期中…");
   try{
@@ -401,13 +456,13 @@ async function syncAll(options={}){
     const cut=C.cutoffDateForYears(C.localToday(),3);await BMMDB.pruneBefore(cut);
     state.lastSynced=new Date().toISOString();await BMMDB.setMeta("lastSynced",state.lastSynced);await loadState();renderAll();
     if(errors.length){
-      updateStatus(`一部失敗 ${errors.length}店舗 / ${updated.join("・")}`);
+      updateStatus(`一部失敗 ${errors.length}店舗 / ${updated.join("・")}${commonSync?` / マスタ${commonSync.masterCount}件・棚${commonSync.shelfCount}行`:""}`);
       if(!options.silent) alert(errors.join("\n"));
     }else if(warnings.length){
-      updateStatus(`${total}行更新（${updated.join("・")}）`);
+      updateStatus(`${total}行更新（${updated.join("・")}）${commonSync?` / マスタ${commonSync.masterCount}件・棚${commonSync.shelfCount}行`:""}`);
       if(!options.silent) alert(`同期完了\n\n${warnings.join("\n")}`);
     }else{
-      updateStatus(`${total}行更新（${updated.join("・")}）`);
+      updateStatus(`${total}行更新（${updated.join("・")}）${commonSync?` / マスタ${commonSync.masterCount}件・棚${commonSync.shelfCount}行`:""}`);
     }
   }catch(e){updateStatus(`更新失敗：${String(e.message||e).slice(0,80)}`);if(!options.silent)alert(e.message);else console.error(e);}
   finally{$("refreshBtn").disabled=false;}
