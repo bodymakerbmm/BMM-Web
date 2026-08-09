@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="BODYMAKER BMM Web - 店舗売上・棚・在庫分析">
-<title>BMM Web Version 2.3.1</title>
+<title>BMM Web Version 2.3.2</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
-  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 2.3.1</small></h1><p>店舗売上・棚・在庫分析</p></div>
+  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 2.3.2</small></h1><p>店舗売上・棚・在庫分析</p></div>
   <div class="top-actions">
     <span id="syncStatus" class="status">起動確認中…</span>
     <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
-    <button id="importDataBtn" class="btn">棚・在庫データ</button>
-    <button id="commonDataBtn" class="btn">共通商品マスタ</button>
+    <button class="btn secondary" id="importDataBtn">在庫データ</button>
+    
     <button id="settingsBtn" class="btn">店舗設定</button>
   </div>
 </header>
@@ -85,21 +85,21 @@
 <div class="dialog-actions"><button id="saveSettingsBtn" type="button" class="btn btn-primary">保存して同期</button></div><div id="settingsMessage" class="message"></div>
 </form></dialog>
 
-<dialog id="commonDataDialog"><form method="dialog" class="dialog-card">
-<div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>共通商品マスタ</h2></div><button value="cancel" class="icon-btn">×</button></div>
-<p class="muted">商品マスタは全店舗共通です。共通BMMスプレッドシートの「商品マスタ」タブから自動同期します。手動ファイル取込は予備手段として残しています。商品名はJANコード完全一致でこのマスタから取得し、売上シートのH列は使用しません。GoogleスプレッドシートURL、またはCSV / Excelファイルのどちらかで登録できます。ローカルファイルはこの端末内だけで処理され、外部へ送信しません。</p>
-<div class="common-data-grid"><label>商品マスタGoogleタブURL<input id="commonMasterUrl" placeholder="任意：GoogleスプレッドシートURL"></label>
-<label class="file-drop">商品マスタファイル（CSV / XLSX）<input id="masterFileInput" type="file" accept=".csv,.xlsx,.xls"></label></div>
-<div class="dialog-actions"><button id="saveCommonMasterUrlBtn" type="button" class="btn">URLを保存</button><button id="importMasterFileBtn" type="button" class="btn btn-primary">ファイルを取り込む</button></div>
-<div id="commonDataMessage" class="message"></div>
-</form></dialog>
 
-<dialog id="importDataDialog"><form method="dialog" class="dialog-card">
-<div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>棚・在庫データ取込</h2></div><button value="cancel" class="icon-btn">×</button></div>
-<div class="import-grid">
-<article class="import-box"><h3>① 棚データ（データ1 TXT）</h3><label>対象店舗<select id="shelfStoreSelect"></select></label><label>有効開始日<input id="shelfEffectiveDate" type="date"></label><label>TXT / CSV<input id="shelfFileInput" type="file" accept=".txt,.csv"></label><button id="importShelfBtn" type="button" class="btn btn-primary">棚データを取り込む</button><div id="shelfImportMessage" class="message"></div></article>
-<article class="import-box"><h3>② 週次在庫（Excel）</h3><label>在庫基準日<input id="stockSnapshotDate" type="date"></label><label>全店舗在庫Excel<input id="stockFileInput" type="file" accept=".xlsx,.xls"></label><button id="importStockBtn" type="button" class="btn btn-primary">在庫Excelを取り込む</button><div id="stockImportMessage" class="message"></div></article>
-</div></form></dialog>
+
+<dialog id="importDataDialog" class="modal">
+  <div class="modal-head"><div><div class="eyebrow">BMM WEB</div><h2>在庫データ取込</h2></div><button class="icon-btn" onclick="document.getElementById('importDataDialog').close()">×</button></div>
+  <div class="import-grid one-column">
+    <article class="import-box">
+      <h3>週次在庫（Excel）</h3>
+      <p class="note">月曜朝（日曜営業終了時点）の全店舗在庫Excelを取り込みます。在庫は週次更新です。</p>
+      <label>在庫基準日<input id="stockSnapshotDate" type="date"></label>
+      <label>全店舗在庫Excel<input id="stockFileInput" type="file" accept=".xlsx,.xls,.csv"></label>
+      <button class="btn primary" id="importStockBtn">在庫Excelを取り込む</button>
+      <p class="message" id="stockImportMessage"></p>
+    </article>
+  </div>
+</dialog>
 
 <template id="storeRowTemplate"><div class="store-row store-row-v101"><input class="store-name" placeholder="店舗名（例：東大阪店）"><input class="store-url" placeholder="売上タブを開いた状態のURL"><input class="store-excluded-shelves" placeholder="除外棚（例：1,2,3,45,51）"><button type="button" class="btn btn-danger remove-store">削除</button></div></template>
 

@@ -348,24 +348,38 @@
   }
 
   function detectMasterLayout(rows){
-    const hr=findHeaderRow(rows,[["upcコード","jan"],["外部id","頭品番","品番"],["表示名","商品名","品名","名前"]],20);
+    const hr=findHeaderRow(rows,[["upcコード","jan"],["外部id","品番","頭品番"],["表示名","商品名","品名","名前"]],30);
     const header=(rows[hr>=0?hr:0]||[]).map(v=>String(v??""));
-    return {
-      headerRow:hr>=0?hr:0,
-      jan:findHeaderIndex(header,["UPCコード","JAN","バーコード"]),
-      sku:findHeaderIndex(header,["外部ID","品番","頭品番","商品コード"]),
-      name:findHeaderIndex(header,["表示名","商品名","品名","名前"]),
-      price:findHeaderIndex(header,["オンライン価格","価格"]),
-      category:findHeaderIndex(header,["商品分類"])
-    };
+
+    let jan=findHeaderIndex(header,["UPCコード","JAN","バーコード"]);
+    let sku=findHeaderIndex(header,["外部ID","品番","頭品番","商品コード"]);
+    let name=findHeaderIndex(header,["表示名","商品名","品名","名前"]);
+    let price=findHeaderIndex(header,["オンライン価格","価格"]);
+    let category=findHeaderIndex(header,["商品分類"]);
+
+    // BODYMAKER商品マスタ既知レイアウトの安全なフォールバック
+    // G=外部ID(品番), J=表示名, M=オンライン価格, S=商品分類, AA=UPC/JAN
+    if(sku<0 && header.length>=7) sku=6;
+    if(name<0 && header.length>=10) name=9;
+    if(price<0 && header.length>=13) price=12;
+    if(category<0 && header.length>=19) category=18;
+    if(jan<0 && header.length>=27) jan=26;
+
+    return {headerRow:hr>=0?hr:0,jan,sku,name,price,category};
   }
 
   function masterRowsToRecords(rows){
     const m=detectMasterLayout(rows),src=rows.slice(m.headerRow+1),out=[];
     for(const row of src){
-      const jan=m.jan>=0?normalizeCode(row[m.jan]):"",sku=m.sku>=0?String(row[m.sku]??"").normalize("NFKC").trim():"",name=m.name>=0?String(row[m.name]??"").trim():"";
-      if(!(jan||sku||name))continue;
-      out.push({jan,sku,name,price:m.price>=0?parseNumber(row[m.price]):0,category:m.category>=0?String(row[m.category]??"").trim():""});
+      const jan=m.jan>=0?normalizeCode(row[m.jan]):"";
+      const sku=m.sku>=0?String(row[m.sku]??"").normalize("NFKC").trim():"";
+      const name=m.name>=0?String(row[m.name]??"").trim():"";
+      if(!jan) continue; // 商品名連携の正本はJAN一致。JAN無し行はマスタ対象外。
+      out.push({
+        jan,sku,name,
+        price:m.price>=0?parseNumber(row[m.price]):0,
+        category:m.category>=0?String(row[m.category]??"").trim():""
+      });
     }
     return out;
   }

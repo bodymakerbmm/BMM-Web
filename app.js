@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="2.3.1", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="2.3.2", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -11,9 +11,9 @@ const DEFAULT_STORES=[
   {name:"ららぽーと堺店",url:"https://docs.google.com/spreadsheets/d/1fb5XVcmwpqi-MOFifStk39Rr5fUzU0b7/edit?gid=465268523#gid=465268523",excludedShelves:""},
   {name:"江坂店",url:"https://docs.google.com/spreadsheets/d/1LSpa6rt6c9ZOEzT5oRVDElYqNcULDKSK/edit?gid=465268523#gid=465268523",excludedShelves:""}
 ];
-const COMMON_DATA_SPREADSHEET_URL="https://docs.google.com/spreadsheets/d/1ZYzmDyYK2Oj8zGBsmb2EloI2jWHvFuXLj49pB5goWtw/edit?gid=0#gid=0";
-const COMMON_MASTER_SHEET_NAME="商品マスタ";
-const COMMON_SHELF_SHEET_NAME="棚番号";
+const COMMON_DATA_SPREADSHEET_ID="1ZYzmDyYK2Oj8zGBsmb2EloI2jWHvFuXLj49pB5goWtw";
+const COMMON_MASTER_GID="0";
+const COMMON_SHELF_GID="61629702";
 
 let state={config:{stores:[...DEFAULT_STORES],commonMasterUrl:""},records:[],filtered:[],shelfRows:[],shelfHistory:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
 
@@ -335,14 +335,14 @@ function updateStatus(msg){
   $("syncStatus").textContent=msg||(state.lastSynced?`最終同期 ${new Date(state.lastSynced).toLocaleString("ja-JP")}`:"未同期");
 }
 
-async function fetchSheetTabRows(spreadsheetUrl,sheetName,label){
-  const m=String(spreadsheetUrl||"").match(/\/spreadsheets\/d\/([^/]+)/);
-  if(!m)throw new Error(`${label}: スプレッドシートURLを確認してください。`);
-  const id=m[1];
-  const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&headers=0`;
+async function fetchSheetGidRows(spreadsheetId,gid,label){
+  const url=`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`;
   const res=await fetch(url,{cache:"no-store"});
-  if(!res.ok)throw new Error(`${label}: Googleスプレッドシートを取得できません（${res.status}）。`);
-  return C.parseCSV(await res.text());
+  if(!res.ok) throw new Error(`${label}: Googleスプレッドシートを取得できません（${res.status}）。`);
+  const text=await res.text();
+  const rows=C.parseCSV(text);
+  if(!rows.length) throw new Error(`${label}: データが空です。`);
+  return rows;
 }
 
 async function fetchCsvRows(url,label){
@@ -390,22 +390,27 @@ async function fetchStore(store,midx){
 async function syncCommonMasterAndShelves(){
   let masterCount=0,shelfCount=0;
 
-  const masterRows=await fetchSheetTabRows(COMMON_DATA_SPREADSHEET_URL,COMMON_MASTER_SHEET_NAME,"共通商品マスタ");
+  // 商品マスタ: gid=0 を正本として直接CSV取得
+  const masterRows=await fetchSheetGidRows(COMMON_DATA_SPREADSHEET_ID,COMMON_MASTER_GID,"共通商品マスタ");
   const masterRecords=C.masterRowsToRecords(masterRows);
-  if(masterRecords.length){
-    await BMMDB.replaceMaster(masterRecords);
-    await persistMasterSnapshot(masterRecords);
-    state.masterRows=masterRecords;
-    masterCount=masterRecords.length;
-  }
+  if(!masterRecords.length) throw new Error("共通商品マスタ: JAN付き商品を1件も判定できません。商品マスタのAA列(UPC/JAN)を確認してください。");
 
-  const shelfGrid=await fetchSheetTabRows(COMMON_DATA_SPREADSHEET_URL,COMMON_SHELF_SHEET_NAME,"共通棚データ");
+  const masterIndex=C.buildMasterIndex(masterRecords);
+  if(!masterIndex.byJan.size) throw new Error("共通商品マスタ: JAN索引を作成できません。");
+
+  await BMMDB.replaceMaster(masterRecords);
+  await persistMasterSnapshot(masterRecords);
+  state.masterRows=masterRecords;
+  masterCount=masterRecords.length;
+
+  // 棚番号: gidを固定して横持ち店舗列を取得
+  const shelfGrid=await fetchSheetGidRows(COMMON_DATA_SPREADSHEET_ID,COMMON_SHELF_GID,"共通棚データ");
   const shelfRecords=C.parseShelfGridRows(shelfGrid);
   if(shelfRecords.length){
     const byStore=new Map();
     for(const r of shelfRecords){
-      if(!r.store)continue;
-      if(!byStore.has(r.store))byStore.set(r.store,[]);
+      if(!r.store) continue;
+      if(!byStore.has(r.store)) byStore.set(r.store,[]);
       byStore.get(r.store).push(r);
     }
     const effectiveFrom=C.localToday();
@@ -414,9 +419,11 @@ async function syncCommonMasterAndShelves(){
       await BMMDB.replaceShelfSnapshot(store,effectiveFrom,rows);
       shelfCount+=rows.length;
     }
-    await loadState();
-    await persistShelfSnapshots();
   }
+
+  await loadState();
+  await persistMasterSnapshot(state.masterRows);
+  await persistShelfSnapshots();
 
   await BMMDB.addSyncLog({
     syncedAt:new Date().toISOString(),
@@ -424,7 +431,8 @@ async function syncCommonMasterAndShelves(){
     target:"商品マスタ・棚番号",
     rows:masterCount+shelfCount
   });
-  return {masterCount,shelfCount};
+
+  return {masterCount,shelfCount,masterJanCount:masterIndex.byJan.size};
 }
 
 async function syncAll(options={}){
@@ -529,7 +537,7 @@ async function importMasterFile(){
 
 function openImport(){
   renderStoreOptions();const today=C.localToday();if(!$("stockSnapshotDate").value)$("stockSnapshotDate").value=today;
-  $("shelfImportMessage").textContent="";$("stockImportMessage").textContent="";$("importDataDialog").showModal();
+  $("stockImportMessage").textContent="";$("importDataDialog").showModal();
 }
 async function importShelf(){
   const f=$("shelfFileInput").files[0],store=$("shelfStoreSelect").value,effectiveFrom=$("shelfEffectiveDate").value;
@@ -565,8 +573,7 @@ async function importAll(file){
 
 function bind(){
   $("refreshBtn").onclick=()=>syncAll();$("settingsBtn").onclick=openSettings;$("saveSettingsBtn").onclick=saveSettings;$("addStoreBtn").onclick=()=>addStoreRow();
-  $("commonDataBtn").onclick=openCommon;$("saveCommonMasterUrlBtn").onclick=saveMasterUrl;$("importMasterFileBtn").onclick=importMasterFile;
-  $("importDataBtn").onclick=openImport;$("importShelfBtn").onclick=importShelf;$("importStockBtn").onclick=importStock;
+  $("importDataBtn").onclick=openImport;$("importStockBtn").onclick=importStock;
   $("applyFilterBtn").onclick=applyFilter;$("clearFilterBtn").onclick=()=>{$("dateFrom").value="";$("dateTo").value="";applyFilter();};
   $("productSearch").oninput=()=>renderProducts(C.aggregateProducts(state.filtered).sort((a,b)=>b.sales-a.sales));$("rankingType").onchange=()=>renderRanking(C.aggregateProducts(state.filtered));
   $("comparePeriodsBtn").onclick=comparePeriods;$("stockSnapshotSelect").onchange=()=>{renderStock();renderProducts(C.aggregateProducts(state.filtered));};
