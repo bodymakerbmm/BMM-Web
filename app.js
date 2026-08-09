@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="2.3.2", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="2.3.3", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -184,7 +184,6 @@ function renderStoreOptions(){
   const stores=storesAll(),old=$("storeFilter").value;
   $("storeFilter").innerHTML='<option value="">全店舗</option>'+stores.map(s=>`<option>${esc(s)}</option>`).join("");
   if(stores.includes(old))$("storeFilter").value=old;
-  $("shelfStoreSelect").innerHTML=stores.map(s=>`<option>${esc(s)}</option>`).join("");
 }
 function applyFilter(){
   state.filtered=C.filterRecords(state.records,{store:$("storeFilter").value,from:$("dateFrom").value,to:$("dateTo").value});
@@ -438,7 +437,13 @@ async function syncCommonMasterAndShelves(){
 async function syncAll(options={}){
   await repairSavedSalesData();
   let commonSync=null;
-  try{commonSync=await syncCommonMasterAndShelves();}catch(e){console.warn(e);if(!options.silent)alert(`共通データ同期失敗\n${e.message}`);}
+  try{
+    commonSync=await syncCommonMasterAndShelves();
+  }catch(e){
+    console.warn(e);
+    updateStatus(`共通データ同期失敗: ${e.message}`);
+    if(!options.silent)alert(`共通データ同期失敗\n${e.message}`);
+  }
   if(!state.config.stores.length){if(!options.silent)$("settingsDialog").showModal();updateStatus("店舗設定が必要です");return;}
   $("refreshBtn").disabled=true;updateStatus(options.silent?"自動更新中…":"同期中…");
   try{
@@ -475,13 +480,13 @@ async function syncAll(options={}){
     const cut=C.cutoffDateForYears(C.localToday(),3);await BMMDB.pruneBefore(cut);
     state.lastSynced=new Date().toISOString();await BMMDB.setMeta("lastSynced",state.lastSynced);await loadState();renderAll();
     if(errors.length){
-      updateStatus(`一部失敗 ${errors.length}店舗 / ${updated.join("・")}${commonSync?` / マスタ${commonSync.masterCount}件・棚${commonSync.shelfCount}行`:""}`);
+      updateStatus(`一部失敗 ${errors.length}店舗 / ${updated.join("・")}${commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:""}`);
       if(!options.silent) alert(errors.join("\n"));
     }else if(warnings.length){
-      updateStatus(`${total}行更新（${updated.join("・")}）${commonSync?` / マスタ${commonSync.masterCount}件・棚${commonSync.shelfCount}行`:""}`);
+      updateStatus(`${total}行更新（${updated.join("・")}）${commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:""}`);
       if(!options.silent) alert(`同期完了\n\n${warnings.join("\n")}`);
     }else{
-      updateStatus(`${total}行更新（${updated.join("・")}）${commonSync?` / マスタ${commonSync.masterCount}件・棚${commonSync.shelfCount}行`:""}`);
+      updateStatus(`${total}行更新（${updated.join("・")}）${commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:""}`);
     }
   }catch(e){updateStatus(`更新失敗：${String(e.message||e).slice(0,80)}`);if(!options.silent)alert(e.message);else console.error(e);}
   finally{$("refreshBtn").disabled=false;}
@@ -507,8 +512,6 @@ async function saveSettings(){
   if(!stores.length){$("settingsMessage").textContent="店舗名とURLを入力してください。";return;}state.config={...state.config,stores};await saveConfig();$("settingsDialog").close();await syncAll();
 }
 
-function openCommon(){ $("commonMasterUrl").value=state.config.commonMasterUrl||"";$("commonDataMessage").textContent=`現在 ${state.masterRows.length}件保存`;$("commonDataDialog").showModal(); }
-async function saveMasterUrl(){state.config.commonMasterUrl=$("commonMasterUrl").value.trim();await saveConfig();$("commonDataMessage").textContent="URLを保存しました。";if(state.config.commonMasterUrl)await syncAll();}
 async function readTextSmart(file){
   const buf=await file.arrayBuffer(),u8=new Uint8Array(buf);let text=new TextDecoder("utf-8").decode(u8);
   const bad=(text.match(/\uFFFD/g)||[]).length;
@@ -528,31 +531,9 @@ async function rowsFromSpreadsheetFile(file,kind="generic"){
   }
   return best||[];
 }
-async function importMasterFile(){
-  const f=$("masterFileInput").files[0];if(!f){$("commonDataMessage").textContent="ファイルを選択してください。";return;}
-  try{const rows=/\.csv$/i.test(f.name)?C.parseCSV(await readTextSmart(f)):await rowsFromSpreadsheetFile(f,"master"),records=C.masterRowsToRecords(rows);if(!records.length)throw new Error("商品マスタを判定できません。");
-    await BMMDB.replaceMaster(records);await persistMasterSnapshot(records);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"商品マスタ",target:f.name,rows:records.length});await loadState();$("commonDataMessage").textContent=`${records.length}件取り込み・永続保存しました。`;renderAll();
-  }catch(e){$("commonDataMessage").textContent=e.message;}
-}
-
 function openImport(){
   renderStoreOptions();const today=C.localToday();if(!$("stockSnapshotDate").value)$("stockSnapshotDate").value=today;
   $("stockImportMessage").textContent="";$("importDataDialog").showModal();
-}
-async function importShelf(){
-  const f=$("shelfFileInput").files[0],store=$("shelfStoreSelect").value,effectiveFrom=$("shelfEffectiveDate").value;
-  if(!f||!store||!effectiveFrom){$("shelfImportMessage").textContent="店舗・有効開始日・TXTファイルを指定してください。";return;}
-  try{
-    const rows=C.parseShelfText(await readTextSmart(f),store);
-    if(!rows.length)throw new Error("棚データを判定できません。");
-    await BMMDB.replaceShelfDates(store,rows);
-    await BMMDB.replaceShelfSnapshot(store,effectiveFrom,rows);
-    await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"棚データ",store,target:`有効開始 ${effectiveFrom}`,rows:rows.length});
-    await loadState();
-    await persistShelfSnapshots();
-    renderAll();
-    $("shelfImportMessage").textContent=`${effectiveFrom}以降の棚配置として ${rows.length}行を永続保存しました。`;
-  }catch(e){$("shelfImportMessage").textContent=e.message;}
 }
 async function importStock(){
   const f=$("stockFileInput").files[0];if(!f){$("stockImportMessage").textContent="在庫Excelを選択してください。";return;}

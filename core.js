@@ -351,7 +351,7 @@
     const hr=findHeaderRow(rows,[["upcコード","jan"],["外部id","品番","頭品番"],["表示名","商品名","品名","名前"]],30);
     const header=(rows[hr>=0?hr:0]||[]).map(v=>String(v??""));
 
-    let jan=findHeaderIndex(header,["UPCコード","JAN","バーコード"]);
+    let jan=findHeaderIndex(header,["UPCコード","UPC","JANコード","JAN","バーコード"]);
     let sku=findHeaderIndex(header,["外部ID","品番","頭品番","商品コード"]);
     let name=findHeaderIndex(header,["表示名","商品名","品名","名前"]);
     let price=findHeaderIndex(header,["オンライン価格","価格"]);
