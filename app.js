@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="3.0.1", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="3.0.2", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -570,7 +570,7 @@ async function syncAll(options={}){
       }
 
       const payload=r.value;
-      await BMMDB.replaceStoreRange(s.name,payload.records);
+      await BMMDB.upsertSalesRecords(payload.records);
       await BMMDB.addSyncLog({
         syncedAt:new Date().toISOString(),
         type:"売上",
