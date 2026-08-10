@@ -75,7 +75,12 @@
     if(!/^\d{4}-\d{2}-\d{2}$/.test(String(date||""))) return false;
     const t=parseDate(today); if(!t) return false;
     const [ty,tm,td]=t.split("-").map(Number);
-    const min=new Date(ty-pastYears,tm-1,td),max=new Date(ty,tm-1,td+futureDays),x=new Date(`${date}T12:00:00`);
+    const [y,m,d]=String(date).split("-").map(Number);
+
+    // 日付だけをローカル正午で比較し、時刻差による当日除外を防ぐ。
+    const min=new Date(ty-pastYears,tm-1,td,12,0,0,0);
+    const max=new Date(ty,tm-1,td+futureDays,12,0,0,0);
+    const x=new Date(y,m-1,d,12,0,0,0);
     return x>=min&&x<=max;
   }
 
