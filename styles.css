@@ -63,3 +63,5 @@ dialog{width:min(1000px,94vw);border:1px solid var(--border);border-radius:20px;
 .subcard{background:#101621;border:1px solid var(--border);border-radius:16px;padding:16px}.subcard h3{margin-top:0}
 @media(max-width:900px){.mini-kpis,.kpi-detail-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:520px){.mini-kpis,.kpi-detail-grid{grid-template-columns:1fr}}
+
+.shared-history-setting{margin-top:18px;padding:14px;border:1px solid var(--border);border-radius:14px;background:#101621}.shared-history-setting input{width:100%;margin-top:7px}

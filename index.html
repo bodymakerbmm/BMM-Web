@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="BODYMAKER BMM Web - 店舗売上・棚・在庫分析">
-<title>BMM Web Version 3.0.3</title>
+<title>BMM Web Version 3.1.0</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
-  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 3.0.3</small></h1><p>店舗売上・棚・在庫分析</p></div>
+  <div><span class="brand-kicker">BODYMAKER</span><h1>BMM Web <small class="version">Version 3.1.0</small></h1><p>店舗売上・棚・在庫分析</p></div>
   <div class="top-actions">
     <span id="syncStatus" class="status">起動確認中…</span>
     <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
@@ -104,7 +104,7 @@
 
 <section id="history" class="tab-panel"><div class="grid-2">
 <article class="card"><h2>保存データ</h2><div id="historySummary"></div></article>
-<article class="card"><h2>履歴の保護</h2><p class="muted">この端末に最大3年保存。PC交換・ブラウザ初期化に備えてバックアップしてください。</p>
+<article class="card"><h2>履歴の保護</h2><p class="muted">共有履歴設定後はGoogle側に最大3年保存し、どのブラウザ・PCでも同じ売上履歴を利用します。バックアップ機能も予備として残しています。</p>
 <div class="history-actions"><button id="exportHistoryBtn" class="btn btn-primary">全データをバックアップ</button><label class="btn file-btn">バックアップを復元<input id="importHistoryInput" type="file" accept=".json" hidden></label></div></article>
 </div><article class="card"><h2>同期・取込履歴</h2><div id="syncLogTable"></div></article></section>
 </main>
@@ -113,6 +113,7 @@
 <div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>店舗データ設定</h2></div><button value="cancel" class="icon-btn">×</button></div>
 <p class="muted">各店舗の売上タブURLと、その店舗で集計対象から外す棚番号を登録します。除外棚は「1,2,3」のようにカンマ区切りで入力してください。棚番号が変わった場合はここを書き換えるだけで対応できます。</p>
 <div id="storeRows"></div><button id="addStoreBtn" type="button" class="btn">＋ 店舗を追加</button>
+<div class="shared-history-setting"><label>共有売上履歴API（通常は「BMM設定」シートから自動取得）<input id="historyApiUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec"></label><p class="muted">設定後は売上履歴をGoogle側に最大3年保存し、Chrome・Firefox・別PC・スマホで同じ履歴を使用します。</p></div>
 <div class="dialog-actions"><button id="saveSettingsBtn" type="button" class="btn btn-primary">保存して同期</button></div><div id="settingsMessage" class="message"></div>
 </form></dialog>
 

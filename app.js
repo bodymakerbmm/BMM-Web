@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="3.0.3", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="3.1.0", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -16,7 +16,7 @@ const COMMON_DATA_SPREADSHEET_ID="1ZYzmDyYK2Oj8zGBsmb2EloI2jWHvFuXLj49pB5goWtw";
 const COMMON_MASTER_GID="0";
 const COMMON_SHELF_GID="61629702";
 
-let state={config:{stores:[...DEFAULT_STORES],commonMasterUrl:""},records:[],filtered:[],shelfRows:[],shelfHistory:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
+let state={config:{stores:[...DEFAULT_STORES],commonMasterUrl:"",historyApiUrl:""},records:[],filtered:[],shelfRows:[],shelfHistory:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
 
 const PERSIST_CACHE="bmm-persistent-data-v1";
 const PERSIST_KEYS={
@@ -123,12 +123,9 @@ function table(headers,rows){
 }
 
 async function migrateSalesSchema(){
-  const current=await BMMDB.getMeta("salesSchemaVersion");
-  if(current===SALES_SCHEMA_VERSION) return false;
-  await BMMDB.resetSalesForSchemaMigration();
+  const current=await BMMDB.getMeta("salesSchemaVersion");if(current===SALES_SCHEMA_VERSION)return false;
   await BMMDB.setMeta("salesSchemaVersion",SALES_SCHEMA_VERSION);
-  await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"システム修復",target:"売上保存形式を再構築",rows:0});
-  return true;
+  await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"システム更新",target:"売上保存形式を非破壊更新",rows:0});return true;
 }
 
 async function repairSavedSalesData(){
@@ -439,7 +436,7 @@ function renderHistory(){
   const sr=C.dataRange(state.records),sh=C.dataRange(state.shelfRows),stockDates=[...new Set(state.stockRows.map(r=>r.snapshotDate))].filter(Boolean).sort();
   $("historySummary").innerHTML=[
     ["売上保存期間",`${sr.from||"未保存"} ～ ${sr.to||"未保存"}`],["売上行数",num(state.records.length)],["最新棚データ行数",num(state.shelfRows.length)],["棚履歴行数",num(state.shelfHistory.length)],
-    ["在庫保存期間",stockDates.length?`${stockDates[0]} ～ ${stockDates.at(-1)}`:"未保存"],["在庫行数",num(state.stockRows.length)],["商品マスタ",`${num(state.masterRows.length)}件`]
+    ["在庫保存期間",stockDates.length?`${stockDates[0]} ～ ${stockDates.at(-1)}`:"未保存"],["在庫行数",num(state.stockRows.length)],["商品マスタ",`${num(state.masterRows.length)}件`],["3年共有売上履歴",state.config.historyApiUrl?"接続設定済み":"未設定"]
   ].map(x=>`<div class="history-stat"><span>${x[0]}</span><strong>${x[1]}</strong></div>`).join("");
   $("syncLogTable").innerHTML=table([{label:"日時"},{label:"種別"},{label:"対象"},{label:"件数",num:true}],state.syncLog.map(l=>[esc(new Date(l.syncedAt).toLocaleString("ja-JP")),esc(l.type||"売上"),esc(l.store||l.target||""),num(l.rows||0)]));
 }
@@ -447,6 +444,15 @@ function updateStatus(msg){
   $("syncStatus").textContent=msg||(state.lastSynced?`最終同期 ${new Date(state.lastSynced).toLocaleString("ja-JP")}`:"未同期");
 }
 
+
+const HISTORY_SETTINGS_SHEET="BMM設定",HISTORY_SETTINGS_KEY="履歴API_URL";
+function normalizeHistoryApiUrl(v){const s=String(v||"").trim();return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec(?:\?.*)?$/.test(s)?s.replace(/\?.*$/,""):"";}
+async function discoverHistoryApiUrl(){const own=normalizeHistoryApiUrl(state.config.historyApiUrl);if(own)return own;try{const u=`https://docs.google.com/spreadsheets/d/${COMMON_DATA_SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(HISTORY_SETTINGS_SHEET)}&headers=0`,res=await fetch(u,{cache:"no-store"});if(!res.ok)return "";const rows=C.parseCSV(await res.text());for(const row of rows)if(C.normalizeText(row[0])===C.normalizeText(HISTORY_SETTINGS_KEY)){const f=normalizeHistoryApiUrl(row[1]);if(f){state.config.historyApiUrl=f;await saveConfig();return f;}}}catch(e){console.warn("履歴API自動検出失敗",e);}return "";}
+function prepareHistorySyncRecords(records){const m=new Map();for(const r of records||[]){if(!r.store||!r.date||!r.jan)continue;const k=[r.store,r.date,C.normalizeText(r.jan),C.normalizeText(r.sku)].join("|"),x=m.get(k)||{store:r.store,date:r.date,jan:r.jan,sku:r.sku||"",qty:0,sales:0};x.qty+=Number(r.qty)||0;x.sales+=Number(r.sales)||0;m.set(k,x);}return[...m.values()];}
+function postHistoryForm(apiUrl,records){return new Promise((resolve,reject)=>{const iframe=document.createElement("iframe"),form=document.createElement("form"),input=document.createElement("input"),name=`bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`;iframe.name=name;iframe.style.display=form.style.display="none";form.method="POST";form.action=apiUrl;form.target=name;input.type="hidden";input.name="payload";input.value=JSON.stringify({version:1,records:prepareHistorySyncRecords(records)});form.appendChild(input);document.body.append(iframe,form);let submitted=false,done=false;const finish=ok=>{if(done)return;done=true;setTimeout(()=>{form.remove();iframe.remove();},0);ok?resolve(true):reject(new Error("共有売上履歴への保存に失敗しました。"));},timer=setTimeout(()=>finish(false),15000);iframe.onload=()=>{if(!submitted)return;setTimeout(()=>{clearTimeout(timer);finish(true);},250);};submitted=true;form.submit();});}
+function fetchHistoryJsonp(apiUrl){return new Promise((resolve,reject)=>{const cb=`__bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`,sc=document.createElement("script");let done=false;const clean=()=>{try{delete window[cb];}catch{}sc.remove();},timer=setTimeout(()=>{if(done)return;done=true;clean();reject(new Error("共有売上履歴の読込がタイムアウトしました。"));},15000);window[cb]=p=>{if(done)return;done=true;clearTimeout(timer);clean();p&&p.ok===true?resolve(Array.isArray(p.records)?p.records:[]):reject(new Error(p?.error||"共有売上履歴の読込に失敗しました。"));};sc.onerror=()=>{if(done)return;done=true;clearTimeout(timer);clean();reject(new Error("共有売上履歴APIへ接続できません。"));};sc.src=`${apiUrl}${apiUrl.includes("?")?"&":"?"}action=history&callback=${encodeURIComponent(cb)}&_=${Date.now()}`;document.head.appendChild(sc);});}
+function historyDayKeys(rs){return new Set((rs||[]).filter(r=>r.store&&r.date).map(r=>`${r.store}|${r.date}`));}
+async function syncAndLoadSharedHistory(apiUrl,fresh,midx){const prepared=prepareHistorySyncRecords(fresh),expected=historyDayKeys(prepared);if(prepared.length)await postHistoryForm(apiUrl,prepared);let shared=[];for(let a=0;a<3;a++){shared=await fetchHistoryJsonp(apiUrl);const actual=historyDayKeys(shared);if([...expected].every(k=>actual.has(k)))break;await new Promise(r=>setTimeout(r,700));}const enriched=C.enrichWithMaster(shared,midx);await BMMDB.replaceAllSalesRecords(enriched);return enriched;}
 async function fetchSheetGidRows(spreadsheetId,gid,label){
   const url=`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`;
   const res=await fetch(url,{cache:"no-store"});
@@ -548,61 +554,18 @@ async function syncCommonMasterAndShelves(){
 }
 
 async function syncAll(options={}){
-  await repairSavedSalesData();
-  let commonSync=null;
-  try{
-    commonSync=await syncCommonMasterAndShelves();
-  }catch(e){
-    console.warn(e);
-    updateStatus(`共通データ同期失敗: ${e.message}`);
-    if(!options.silent)alert(`共通データ同期失敗\n${e.message}`);
-  }
-  if(!state.config.stores.length){if(!options.silent)$("settingsDialog").showModal();updateStatus("店舗設定が必要です");return;}
-  $("refreshBtn").disabled=true;updateStatus(options.silent?"自動更新中…":"同期中…");
-  try{
-    const midx=await masterIndex(),results=await Promise.allSettled(state.config.stores.map(s=>fetchStore(s,midx)));let total=0,errors=[],updated=[];
-    const warnings=[];
-    for(let i=0;i<results.length;i++){
-      const r=results[i],s=state.config.stores[i];
-      if(r.status==="rejected"){
-        errors.push(r.reason.message);
-        continue;
-      }
-
-      const payload=r.value;
-      await BMMDB.upsertSalesRecords(payload.records);
-      await BMMDB.addSyncLog({
-        syncedAt:new Date().toISOString(),
-        type:"売上",
-        store:s.name,
-        rows:payload.records.length,
-        ignored:payload.ignored,
-        invalid:payload.invalid.length
-      });
-
-      total+=payload.records.length;
-      updated.push(`${s.name} ${payload.records.length}行`);
-
-      if(payload.ignored||payload.invalid.length){
-        warnings.push(
-          `${s.name}: ${payload.records.length}行取込 / 空行等${payload.ignored}行無視 / 不正${payload.invalid.length}行除外`
-        );
-      }
-    }
-    if(!total)throw new Error(errors.join("\n")||"データを取得できません。");
-    const cut=C.cutoffDateForYears(C.localToday(),3);await BMMDB.pruneBefore(cut);
-    state.lastSynced=new Date().toISOString();await BMMDB.setMeta("lastSynced",state.lastSynced);await loadState();renderAll();
-    if(errors.length){
-      updateStatus(`一部失敗 ${errors.length}店舗 / ${updated.join("・")}${commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:""}`);
-      if(!options.silent) alert(errors.join("\n"));
-    }else if(warnings.length){
-      updateStatus(`${total}行更新（${updated.join("・")}）${commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:""}`);
-      if(!options.silent) alert(`同期完了\n\n${warnings.join("\n")}`);
-    }else{
-      updateStatus(`${total}行更新（${updated.join("・")}）${commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:""}`);
-    }
-  }catch(e){updateStatus(`更新失敗：${String(e.message||e).slice(0,80)}`);if(!options.silent)alert(e.message);else console.error(e);}
-  finally{$("refreshBtn").disabled=false;}
+  await repairSavedSalesData();let commonSync=null;try{commonSync=await syncCommonMasterAndShelves();}catch(e){console.warn(e);updateStatus(`共通データ同期失敗: ${e.message}`);if(!options.silent)alert(`共通データ同期失敗
+${e.message}`);}
+  if(!state.config.stores.length){if(!options.silent)$("settingsDialog").showModal();updateStatus("店舗設定が必要です");return;}$("refreshBtn").disabled=true;updateStatus(options.silent?"自動更新中…":"同期中…");
+  try{const midx=await masterIndex(),apiUrl=await discoverHistoryApiUrl(),results=await Promise.allSettled(state.config.stores.map(s=>fetchStore(s,midx)));let total=0,errors=[],updated=[],fresh=[];const warnings=[];for(let i=0;i<results.length;i++){const r=results[i],s=state.config.stores[i];if(r.status==="rejected"){errors.push(r.reason.message);continue;}const p=r.value;fresh.push(...p.records);total+=p.records.length;updated.push(`${s.name} ${p.records.length}行`);if(p.ignored||p.invalid.length)warnings.push(`${s.name}: ${p.records.length}行取込 / 空行等${p.ignored}行無視 / 不正${p.invalid.length}行除外`);}
+    let sharedCount=0;if(apiUrl){const shared=await syncAndLoadSharedHistory(apiUrl,fresh,midx);sharedCount=shared.length;state.config.historyApiUrl=apiUrl;await saveConfig();}else{if(fresh.length)await BMMDB.upsertSalesRecords(fresh);if(!fresh.length&&errors.length&&!state.records.length)throw new Error(errors.join("\
+")||"データを取得できません。");}
+    await BMMDB.pruneBefore(C.cutoffDateForYears(C.localToday(),3));state.lastSynced=new Date().toISOString();await BMMDB.setMeta("lastSynced",state.lastSynced);await loadState();renderAll();const hl=apiUrl?` / 共有履歴${sharedCount}行`:" / 共有履歴未設定",cl=commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:"";if(errors.length){updateStatus(`一部売上シート読込不可 ${errors.length}店舗 / ${updated.join("・")}${hl}${cl}`);if(!options.silent&&!apiUrl)alert(errors.join("\
+"));}else if(warnings.length){updateStatus(`${total}行更新（${updated.join("・")}）${hl}${cl}`);if(!options.silent)alert(`同期完了\
+\
+${warnings.join("\
+")}`);}else updateStatus(`${total}行更新（${updated.join("・")}）${hl}${cl}`);
+  }catch(e){updateStatus(`更新失敗：${String(e.message||e).slice(0,100)}`);if(!options.silent)alert(e.message);else console.error(e);}finally{$("refreshBtn").disabled=false;}
 }
 
 function addStoreRow(data={}){
@@ -613,16 +576,14 @@ function addStoreRow(data={}){
   n.querySelector(".remove-store").onclick=()=>n.remove();
   $("storeRows").appendChild(n);
 }
-function openSettings(){
-  $("storeRows").innerHTML="";(state.config.stores.length?state.config.stores:[{}]).forEach(addStoreRow);$("settingsMessage").textContent="";$("settingsDialog").showModal();
-}
+function openSettings(){$("storeRows").innerHTML="";(state.config.stores.length?state.config.stores:[{}]).forEach(addStoreRow);$("historyApiUrl").value=state.config.historyApiUrl||"";$("settingsMessage").textContent="";$("settingsDialog").showModal();}
 async function saveSettings(){
   const stores=[...document.querySelectorAll(".store-row")].map(r=>({
     name:r.querySelector(".store-name").value.trim(),
     url:r.querySelector(".store-url").value.trim(),
     excludedShelves:r.querySelector(".store-excluded-shelves").value.normalize("NFKC").split(/[、，,\s]+/).map(v=>v.trim()).filter(Boolean).join(",")
   })).filter(x=>x.name&&x.url);
-  if(!stores.length){$("settingsMessage").textContent="店舗名とURLを入力してください。";return;}state.config={...state.config,stores};await saveConfig();$("settingsDialog").close();await syncAll();
+  if(!stores.length){$("settingsMessage").textContent="店舗名とURLを入力してください。";return;}const historyApiUrl=normalizeHistoryApiUrl($("historyApiUrl").value)||state.config.historyApiUrl||"";state.config={...state.config,stores,historyApiUrl};await saveConfig();$("settingsDialog").close();await syncAll();
 }
 
 async function readTextSmart(file){
@@ -684,7 +645,7 @@ async function start(){
   bind();
   renderAll();
   if(!state.config.stores.length&&!state.records.length){openSettings();return;}
-  if(state.config.stores.length) await syncAll({silent:true});
+  if(state.config.stores.length&&!new URLSearchParams(location.search).has("bmm_test")) await syncAll({silent:true});
 }
 start().catch(e=>{console.error(e);updateStatus("起動エラー");alert(`BMM起動エラー\n${e.message}`);});
 })();
