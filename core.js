@@ -458,7 +458,10 @@
     const known=new Set([jan,sku,name,price,parent].filter(i=>i>=0)),storeCols=[];
     for(let i=0;i<raw.length;i++){
       if(known.has(i))continue;const label=String(raw[i]??"").trim();if(!label)continue;
-      if(label.includes("店")||configuredStores.some(s=>normalizeText(label)===normalizeText(s)))storeCols.push({index:i,name:label});
+      const normLabel=normalizeText(label).replace(/店$/g,"");
+      const matchedStore=(configuredStores||[]).find(store=>{const ns=normalizeText(store).replace(/店$/g,"");return normLabel===ns||normalizeText(label)===normalizeText(store);});
+      if(matchedStore)storeCols.push({index:i,name:String(matchedStore)});
+      else if(label.includes("店"))storeCols.push({index:i,name:label});
     }
     return {headerRow:hr,jan,sku,name,price,storeCols};
   }
@@ -477,8 +480,8 @@
   }
 
   function compactInventoryRecords(records){
-    // 0在庫は保存しない。販売実績がある0在庫商品は売上履歴側から在庫画面へ0として表示できる。
-    return records.filter(r=>Number(r.stock)!==0);
+    // 共通保存では0在庫も重要。0を除外すると「欠品」と「データ未取得」を区別できなくなるため、全店舗・全商品のスナップショットを保持する。
+    return (records||[]).map(r=>({...r,stock:Number(r.stock)||0}));
   }
 
   function stockRowKey(r){return [r.snapshotDate,normalizeText(r.store),normalizeText(r.jan||r.sku)].join("|");}

@@ -128,6 +128,19 @@
     }
   }
 
+  async function replaceAllStock(rows){
+    const db=await openDB();
+    try{
+      const tx=db.transaction(STOCK,"readwrite"),s=tx.objectStore(STOCK);
+      s.clear();
+      for(const r of rows||[]){
+        const id=window.BMMCore.stockRowKey(r);
+        if(id)s.put({...r,_id:id});
+      }
+      await txDone(tx);
+    }finally{db.close();}
+  }
+
   async function replaceStockSnapshot(snapshotDate,rows){
     if(!snapshotDate)return;
     const db=await openDB();
@@ -181,6 +194,6 @@
     if(p.masterRows?.length)await replaceMaster(p.masterRows);for(const l of p.syncLog||[])await addSyncLog(l);if(p.config)await setMeta("config",p.config);if(p.lastSynced)await setMeta("lastSynced",p.lastSynced);
   }
 
-  window.BMMDB={openDB,getAll,clearStore,replaceAllSalesRecords,upsertSalesRecords,replaceStoreRange,replaceShelfDates,replaceShelfSnapshot,replaceStockSnapshot,replaceMaster,pruneBefore,cleanInvalidSalesRecords,resetSalesForSchemaMigration,setMeta,getMeta,addSyncLog,getSyncLog,exportAll,importAll,
+  window.BMMDB={openDB,getAll,clearStore,replaceAllSalesRecords,upsertSalesRecords,replaceStoreRange,replaceShelfDates,replaceShelfSnapshot,replaceStockSnapshot,replaceAllStock,replaceMaster,pruneBefore,cleanInvalidSalesRecords,resetSalesForSchemaMigration,setMeta,getMeta,addSyncLog,getSyncLog,exportAll,importAll,
     stores:{records:RECORDS,meta:META,syncLog:SYNC_LOG,shelf:SHELF,shelfHistory:SHELF_HISTORY,stock:STOCK,master:MASTER}};
 })();

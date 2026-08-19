@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="3.1.0", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="3.2.0", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -436,7 +436,7 @@ function renderHistory(){
   const sr=C.dataRange(state.records),sh=C.dataRange(state.shelfRows),stockDates=[...new Set(state.stockRows.map(r=>r.snapshotDate))].filter(Boolean).sort();
   $("historySummary").innerHTML=[
     ["売上保存期間",`${sr.from||"未保存"} ～ ${sr.to||"未保存"}`],["売上行数",num(state.records.length)],["最新棚データ行数",num(state.shelfRows.length)],["棚履歴行数",num(state.shelfHistory.length)],
-    ["在庫保存期間",stockDates.length?`${stockDates[0]} ～ ${stockDates.at(-1)}`:"未保存"],["在庫行数",num(state.stockRows.length)],["商品マスタ",`${num(state.masterRows.length)}件`],["3年共有売上履歴",state.config.historyApiUrl?"接続設定済み":"未設定"]
+    ["最新在庫基準日",stockDates.length?stockDates.at(-1):"未保存"],["在庫行数",num(state.stockRows.length)],["商品マスタ",`${num(state.masterRows.length)}件`],["3年共有売上履歴",state.config.historyApiUrl?"接続設定済み":"未設定"]
   ].map(x=>`<div class="history-stat"><span>${x[0]}</span><strong>${x[1]}</strong></div>`).join("");
   $("syncLogTable").innerHTML=table([{label:"日時"},{label:"種別"},{label:"対象"},{label:"件数",num:true}],state.syncLog.map(l=>[esc(new Date(l.syncedAt).toLocaleString("ja-JP")),esc(l.type||"売上"),esc(l.store||l.target||""),num(l.rows||0)]));
 }
@@ -450,9 +450,29 @@ function normalizeHistoryApiUrl(v){const s=String(v||"").trim();return /^https:\
 async function discoverHistoryApiUrl(){const own=normalizeHistoryApiUrl(state.config.historyApiUrl);if(own)return own;try{const u=`https://docs.google.com/spreadsheets/d/${COMMON_DATA_SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(HISTORY_SETTINGS_SHEET)}&headers=0`,res=await fetch(u,{cache:"no-store"});if(!res.ok)return "";const rows=C.parseCSV(await res.text());for(const row of rows)if(C.normalizeText(row[0])===C.normalizeText(HISTORY_SETTINGS_KEY)){const f=normalizeHistoryApiUrl(row[1]);if(f){state.config.historyApiUrl=f;await saveConfig();return f;}}}catch(e){console.warn("履歴API自動検出失敗",e);}return "";}
 function prepareHistorySyncRecords(records){const m=new Map();for(const r of records||[]){if(!r.store||!r.date||!r.jan)continue;const k=[r.store,r.date,C.normalizeText(r.jan),C.normalizeText(r.sku)].join("|"),x=m.get(k)||{store:r.store,date:r.date,jan:r.jan,sku:r.sku||"",qty:0,sales:0};x.qty+=Number(r.qty)||0;x.sales+=Number(r.sales)||0;m.set(k,x);}return[...m.values()];}
 function postHistoryForm(apiUrl,records){return new Promise((resolve,reject)=>{const iframe=document.createElement("iframe"),form=document.createElement("form"),input=document.createElement("input"),name=`bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`;iframe.name=name;iframe.style.display=form.style.display="none";form.method="POST";form.action=apiUrl;form.target=name;input.type="hidden";input.name="payload";input.value=JSON.stringify({version:1,records:prepareHistorySyncRecords(records)});form.appendChild(input);document.body.append(iframe,form);let submitted=false,done=false;const finish=ok=>{if(done)return;done=true;setTimeout(()=>{form.remove();iframe.remove();},0);ok?resolve(true):reject(new Error("共有売上履歴への保存に失敗しました。"));},timer=setTimeout(()=>finish(false),15000);iframe.onload=()=>{if(!submitted)return;setTimeout(()=>{clearTimeout(timer);finish(true);},250);};submitted=true;form.submit();});}
-function fetchHistoryJsonp(apiUrl){return new Promise((resolve,reject)=>{const cb=`__bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`,sc=document.createElement("script");let done=false;const clean=()=>{try{delete window[cb];}catch{}sc.remove();},timer=setTimeout(()=>{if(done)return;done=true;clean();reject(new Error("共有売上履歴の読込がタイムアウトしました。"));},15000);window[cb]=p=>{if(done)return;done=true;clearTimeout(timer);clean();p&&p.ok===true?resolve(Array.isArray(p.records)?p.records:[]):reject(new Error(p?.error||"共有売上履歴の読込に失敗しました。"));};sc.onerror=()=>{if(done)return;done=true;clearTimeout(timer);clean();reject(new Error("共有売上履歴APIへ接続できません。"));};sc.src=`${apiUrl}${apiUrl.includes("?")?"&":"?"}action=history&callback=${encodeURIComponent(cb)}&_=${Date.now()}`;document.head.appendChild(sc);});}
+function fetchHistoryJsonp(apiUrl,action="history"){return new Promise((resolve,reject)=>{const cb=`__bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`,sc=document.createElement("script");let done=false;const clean=()=>{try{delete window[cb];}catch{}sc.remove();},timer=setTimeout(()=>{if(done)return;done=true;clean();reject(new Error("共有売上履歴の読込がタイムアウトしました。"));},15000);window[cb]=p=>{if(done)return;done=true;clearTimeout(timer);clean();p&&p.ok===true?resolve(Array.isArray(p.records)?p.records:[]):reject(new Error(p?.error||"共有売上履歴の読込に失敗しました。"));};sc.onerror=()=>{if(done)return;done=true;clearTimeout(timer);clean();reject(new Error("共有売上履歴APIへ接続できません。"));};sc.src=`${apiUrl}${apiUrl.includes("?")?"&":"?"}action=${encodeURIComponent(action)}&callback=${encodeURIComponent(cb)}&_=${Date.now()}`;document.head.appendChild(sc);});}
 function historyDayKeys(rs){return new Set((rs||[]).filter(r=>r.store&&r.date).map(r=>`${r.store}|${r.date}`));}
 async function syncAndLoadSharedHistory(apiUrl,fresh,midx){const prepared=prepareHistorySyncRecords(fresh),expected=historyDayKeys(prepared);if(prepared.length)await postHistoryForm(apiUrl,prepared);let shared=[];for(let a=0;a<3;a++){shared=await fetchHistoryJsonp(apiUrl);const actual=historyDayKeys(shared);if([...expected].every(k=>actual.has(k)))break;await new Promise(r=>setTimeout(r,700));}const enriched=C.enrichWithMaster(shared,midx);await BMMDB.replaceAllSalesRecords(enriched);return enriched;}
+async function syncAndLoadSharedInventory(apiUrl){
+  const shared=await fetchHistoryJsonp(apiUrl, "inventory");
+  if(!Array.isArray(shared))return 0;
+  const latestDate=[...new Set(shared.map(r=>String(r.snapshotDate||r.date||"")).filter(Boolean))].sort().at(-1)||"";
+  const latest=latestDate?shared.filter(r=>String(r.snapshotDate||r.date||"")===latestDate):[];
+  if(latest.length){
+    const rows=latest.map(r=>({
+      snapshotDate:latestDate,
+      store:String(r.store||""),
+      jan:String(r.jan||""),
+      sku:String(r.sku||""),
+      name:String(r.name||""),
+      stock:Number(r.stock)||0,
+      price:Number(r.price)||0
+    }));
+    await BMMDB.replaceAllStock(rows);
+  }
+  return latest.length;
+}
+function postInventoryForm(apiUrl,records){return new Promise((resolve,reject)=>{const iframe=document.createElement("iframe"),form=document.createElement("form"),input=document.createElement("input"),name=`bmmi_${Date.now()}_${Math.random().toString(36).slice(2)}`;iframe.name=name;iframe.style.display=form.style.display="none";form.method="POST";form.action=apiUrl;form.target=name;input.type="hidden";input.name="payload";input.value=JSON.stringify({action:"inventory",version:1,records:(records||[]).map(r=>({snapshotDate:r.snapshotDate,store:r.store,jan:r.jan||"",sku:r.sku||"",name:r.name||"",stock:Number(r.stock)||0,price:Number(r.price)||0}))});form.appendChild(input);document.body.append(iframe,form);let submitted=false,done=false;const finish=ok=>{if(done)return;done=true;setTimeout(()=>{form.remove();iframe.remove();},0);ok?resolve(true):reject(new Error("共有在庫への保存に失敗しました。"));},timer=setTimeout(()=>finish(false),20000);iframe.onload=()=>{if(!submitted)return;setTimeout(()=>{clearTimeout(timer);finish(true);},300);};submitted=true;form.submit();});}
 async function fetchSheetGidRows(spreadsheetId,gid,label){
   const url=`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`;
   const res=await fetch(url,{cache:"no-store"});
@@ -558,9 +578,9 @@ async function syncAll(options={}){
 ${e.message}`);}
   if(!state.config.stores.length){if(!options.silent)$("settingsDialog").showModal();updateStatus("店舗設定が必要です");return;}$("refreshBtn").disabled=true;updateStatus(options.silent?"自動更新中…":"同期中…");
   try{const midx=await masterIndex(),apiUrl=await discoverHistoryApiUrl(),results=await Promise.allSettled(state.config.stores.map(s=>fetchStore(s,midx)));let total=0,errors=[],updated=[],fresh=[];const warnings=[];for(let i=0;i<results.length;i++){const r=results[i],s=state.config.stores[i];if(r.status==="rejected"){errors.push(r.reason.message);continue;}const p=r.value;fresh.push(...p.records);total+=p.records.length;updated.push(`${s.name} ${p.records.length}行`);if(p.ignored||p.invalid.length)warnings.push(`${s.name}: ${p.records.length}行取込 / 空行等${p.ignored}行無視 / 不正${p.invalid.length}行除外`);}
-    let sharedCount=0;if(apiUrl){const shared=await syncAndLoadSharedHistory(apiUrl,fresh,midx);sharedCount=shared.length;state.config.historyApiUrl=apiUrl;await saveConfig();}else{if(fresh.length)await BMMDB.upsertSalesRecords(fresh);if(!fresh.length&&errors.length&&!state.records.length)throw new Error(errors.join("\
+    let sharedCount=0,sharedStockCount=0;if(apiUrl){const shared=await syncAndLoadSharedHistory(apiUrl,fresh,midx);sharedCount=shared.length;sharedStockCount=await syncAndLoadSharedInventory(apiUrl);state.config.historyApiUrl=apiUrl;await saveConfig();}else{if(fresh.length)await BMMDB.upsertSalesRecords(fresh);if(!fresh.length&&errors.length&&!state.records.length)throw new Error(errors.join("\
 ")||"データを取得できません。");}
-    await BMMDB.pruneBefore(C.cutoffDateForYears(C.localToday(),3));state.lastSynced=new Date().toISOString();await BMMDB.setMeta("lastSynced",state.lastSynced);await loadState();renderAll();const hl=apiUrl?` / 共有履歴${sharedCount}行`:" / 共有履歴未設定",cl=commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:"";if(errors.length){updateStatus(`一部売上シート読込不可 ${errors.length}店舗 / ${updated.join("・")}${hl}${cl}`);if(!options.silent&&!apiUrl)alert(errors.join("\
+    await BMMDB.pruneBefore(C.cutoffDateForYears(C.localToday(),3));state.lastSynced=new Date().toISOString();await BMMDB.setMeta("lastSynced",state.lastSynced);await loadState();renderAll();const hl=apiUrl?` / 共有履歴${sharedCount}行 / 共有在庫${sharedStockCount}行`:" / 共有履歴未設定",cl=commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:"";if(errors.length){updateStatus(`一部売上シート読込不可 ${errors.length}店舗 / ${updated.join("・")}${hl}${cl}`);if(!options.silent&&!apiUrl)alert(errors.join("\
 "));}else if(warnings.length){updateStatus(`${total}行更新（${updated.join("・")}）${hl}${cl}`);if(!options.silent)alert(`同期完了\
 \
 ${warnings.join("\
@@ -613,7 +633,11 @@ async function importStock(){
   const f=$("stockFileInput").files[0];if(!f){$("stockImportMessage").textContent="在庫Excelを選択してください。";return;}
   let date=$("stockSnapshotDate").value||C.inferDateFromFilename(f.name);if(!date){$("stockImportMessage").textContent="在庫基準日を指定してください。";return;}
   try{const rows=await rowsFromSpreadsheetFile(f,"inventory");let records=C.inventoryRowsToRecords(rows,date,state.config.stores.map(s=>s.name));if(!records.length)throw new Error("在庫データを判定できません。");records=C.compactInventoryRecords(records);
-    await BMMDB.replaceStockSnapshot(date,records);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"在庫",target:date,rows:records.length});await loadState();renderAll();$("stockSnapshotSelect").value=date;renderStock();$("stockImportMessage").textContent=`${date}：在庫あり ${records.length}件を保存しました（0在庫は保存せず、販売履歴から0在庫表示します）。`;
+    await BMMDB.replaceStockSnapshot(date,records);
+    const apiUrl=await discoverHistoryApiUrl();
+    if(apiUrl){await postInventoryForm(apiUrl,records);state.config.historyApiUrl=apiUrl;await saveConfig();}
+    await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"在庫",target:date,rows:records.length});
+    await loadState();renderAll();$("stockSnapshotSelect").value=date;renderStock();$("stockImportMessage").textContent=`${date}：${records.length}件を保存しました。0在庫も含めて共有保存済みです。`;
   }catch(e){$("stockImportMessage").textContent=e.message;}
 }
 
