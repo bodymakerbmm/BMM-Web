@@ -478,7 +478,6 @@ function postApiForm(apiUrl,payload,expectedType,timeoutMs=20000){
     form.target=name;
     input.type="hidden";
     input.name="payload";
-    input.value=JSON.stringify(payload);
     form.appendChild(input);
     document.body.append(iframe,form);
 
@@ -494,10 +493,12 @@ function postApiForm(apiUrl,payload,expectedType,timeoutMs=20000){
       cleanup();
       ok?resolve(true):reject(new Error(message||"共有データの保存に失敗しました。"));
     };
+    const token=`${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    payload={...payload,_bmmToken:token};
+    input.value=JSON.stringify(payload);
     const onMessage=(event)=>{
       const d=event&&event.data;
-      if(!d||d.type!==expectedType)return;
-      if(event.source!==iframe.contentWindow)return;
+      if(!d||d.type!==expectedType||d._bmmToken!==token)return;
       finish(d.ok===true,d.message||"共有データの保存に失敗しました。");
     };
     const timer=setTimeout(()=>finish(false,"共有データAPIから保存結果が返りませんでした。"),timeoutMs);
