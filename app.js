@@ -1,7 +1,7 @@
 (() => {
 "use strict";
 const C=window.BMMCore,$=id=>document.getElementById(id);
-const APP_VERSION="3.2.1", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
+const APP_VERSION="3.2.3", SALES_SCHEMA_VERSION="sales-audit-20260808-v2";
 const yen=n=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(n||0);
 const num=n=>new Intl.NumberFormat("ja-JP").format(n||0);
 const pct=n=>n===null?"—":`${(n*100).toFixed(1)}%`;
@@ -464,70 +464,56 @@ async function syncSharedInventoryAtStartup(){
   }
 }
 function prepareHistorySyncRecords(records){const m=new Map();for(const r of records||[]){if(!r.store||!r.date||!r.jan)continue;const k=[r.store,r.date,C.normalizeText(r.jan),C.normalizeText(r.sku)].join("|"),x=m.get(k)||{store:r.store,date:r.date,jan:r.jan,sku:r.sku||"",qty:0,sales:0};x.qty+=Number(r.qty)||0;x.sales+=Number(r.sales)||0;m.set(k,x);}return[...m.values()];}
-function postApiForm(apiUrl,payload,expectedType,timeoutMs=20000){
+function postApiForm(apiUrl,payload,expectedType,timeoutMs=30000){
   return new Promise((resolve,reject)=>{
     const iframe=document.createElement("iframe");
     const form=document.createElement("form");
     const input=document.createElement("input");
     const name=`bmmapi_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    iframe.name=name;
-    iframe.style.display="none";
-    form.style.display="none";
-    form.method="POST";
-    form.action=apiUrl;
-    form.target=name;
-    input.type="hidden";
-    input.name="payload";
-    form.appendChild(input);
-    document.body.append(iframe,form);
-
-    let done=false,submitted=false;
-    const cleanup=()=>{
-      window.removeEventListener("message",onMessage);
-      clearTimeout(timer);
-      setTimeout(()=>{form.remove();iframe.remove();},0);
-    };
-    const finish=(ok,message)=>{
-      if(done)return;
-      done=true;
-      cleanup();
-      ok?resolve(true):reject(new Error(message||"共有データの保存に失敗しました。"));
-    };
     const token=`${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    payload={...payload,_bmmToken:token};
-    input.value=JSON.stringify(payload);
-    const onMessage=(event)=>{
-      const d=event&&event.data;
-      if(!d||d.type!==expectedType||d._bmmToken!==token)return;
-      finish(d.ok===true,d.message||"共有データの保存に失敗しました。");
-    };
-    const timer=setTimeout(()=>finish(false,"共有データAPIから保存結果が返りませんでした。"),timeoutMs);
-    window.addEventListener("message",onMessage);
-    try{
-      submitted=true;
-      form.submit();
-    }catch(e){
-      if(submitted)finish(false,String(e&&e.message||e));
-      else finish(false,"共有データの送信に失敗しました。");
-    }
+    iframe.name=name; iframe.style.display="none"; form.style.display="none";
+    form.method="POST"; form.action=apiUrl; form.target=name;
+    input.type="hidden"; input.name="payload";
+    payload={...payload,_bmmToken:token}; input.value=JSON.stringify(payload);
+    form.appendChild(input); document.body.append(iframe,form);
+    let done=false;
+    const cleanup=()=>{clearTimeout(timer);iframe.removeEventListener("load",onLoad);setTimeout(()=>{form.remove();iframe.remove();},0);};
+    const finish=(ok,message)=>{if(done)return;done=true;cleanup();ok?resolve(token):reject(new Error(message||"共有データAPIへの保存要求に失敗しました。"));};
+    const onLoad=()=>finish(true);
+    iframe.addEventListener("load",onLoad);
+    const timer=setTimeout(()=>finish(false,"共有データAPIへの保存要求がタイムアウトしました。"),timeoutMs);
+    try{form.submit();}catch(e){finish(false,String(e&&e.message||e));}
   });
 }
-function postHistoryForm(apiUrl,records){
-  return postApiForm(
-    apiUrl,
-    {version:1,records:prepareHistorySyncRecords(records)},
-    "BMM_API_SAVE",
-    20000
-  );
-}
-function fetchHistoryJsonp(apiUrl,action="history"){return new Promise((resolve,reject)=>{const cb=`__bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`,sc=document.createElement("script");let done=false;const clean=()=>{try{delete window[cb];}catch{}sc.remove();},timer=setTimeout(()=>{if(done)return;done=true;clean();reject(new Error("共有売上履歴の読込がタイムアウトしました。"));},15000);window[cb]=p=>{if(done)return;done=true;clearTimeout(timer);clean();p&&p.ok===true?resolve(Array.isArray(p.records)?p.records:[]):reject(new Error(p?.error||"共有売上履歴の読込に失敗しました。"));};sc.onerror=()=>{if(done)return;done=true;clearTimeout(timer);clean();reject(new Error("共有売上履歴APIへ接続できません。"));};sc.src=`${apiUrl}${apiUrl.includes("?")?"&":"?"}action=${encodeURIComponent(action)}&callback=${encodeURIComponent(cb)}&_=${Date.now()}`;document.head.appendChild(sc);});}
+function verifySaveToken(shared,token){return !!token && !!shared && shared.saveToken===token;}
+function latestInventoryRows(records){const rs=Array.isArray(records)?records:[],latestDate=[...new Set(rs.map(r=>String(r.snapshotDate||r.date||"")).filter(Boolean))].sort().at(-1)||"";return {latestDate,rows:latestDate?rs.filter(r=>String(r.snapshotDate||r.date||"")===latestDate):[]};}
+function postHistoryForm(apiUrl,records){return postApiForm(apiUrl,{version:1,records:prepareHistorySyncRecords(records)},"BMM_API_SAVE",30000);}
+function fetchHistoryJsonp(apiUrl,action="history",verifyToken=""){return new Promise((resolve,reject)=>{const cb=`__bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`,sc=document.createElement("script");let done=false;const clean=()=>{try{delete window[cb];}catch{}sc.remove();},timer=setTimeout(()=>{if(done)return;done=true;clean();reject(new Error("共有データAPIの確認がタイムアウトしました。"));},15000);window[cb]=p=>{if(done)return;done=true;clearTimeout(timer);clean();p&&p.ok===true?resolve({records:Array.isArray(p.records)?p.records:[],saveToken:String(p.saveToken||"")}):reject(new Error(p?.error||"共有データAPIの読込に失敗しました。"));};sc.onerror=()=>{if(done)return;done=true;clearTimeout(timer);clean();reject(new Error("共有データAPIへ接続できません。"));};let u=`${apiUrl}${apiUrl.includes("?")?"&":"?"}action=${encodeURIComponent(action)}&callback=${encodeURIComponent(cb)}&_=${Date.now()}`;if(verifyToken)u+=`&verifyToken=${encodeURIComponent(verifyToken)}`;sc.src=u;document.head.appendChild(sc);});}
 function historyDayKeys(rs){return new Set((rs||[]).filter(r=>r.store&&r.date).map(r=>`${r.store}|${r.date}`));}
-async function syncAndLoadSharedHistory(apiUrl,fresh,midx){const prepared=prepareHistorySyncRecords(fresh),expected=historyDayKeys(prepared);if(prepared.length)await postHistoryForm(apiUrl,prepared);let shared=[];for(let a=0;a<3;a++){shared=await fetchHistoryJsonp(apiUrl);const actual=historyDayKeys(shared);if([...expected].every(k=>actual.has(k)))break;await new Promise(r=>setTimeout(r,700));}const enriched=C.enrichWithMaster(shared,midx);await BMMDB.replaceAllSalesRecords(enriched);return enriched;}
+async function syncAndLoadSharedHistory(apiUrl,fresh,midx){
+  const prepared=prepareHistorySyncRecords(fresh),expected=historyDayKeys(prepared);
+  let token="";
+  if(prepared.length)token=await postHistoryForm(apiUrl,prepared);
+  let shared=[];
+  for(let a=0;a<8;a++){
+    const result=await fetchHistoryJsonp(apiUrl,"history",token);
+    shared=Array.isArray(result.records)?result.records:[];
+    const actual=historyDayKeys(shared);
+    if(!token || (verifySaveToken(result,token)&&[...expected].every(k=>actual.has(k))))break;
+    await new Promise(r=>setTimeout(r,800));
+  }
+  if(token){
+    const result=await fetchHistoryJsonp(apiUrl,"history",token);
+    if(!verifySaveToken(result,token))throw new Error("共有売上履歴の保存確認ができませんでした。もう一度実行してください。");
+    shared=result.records||[];
+  }
+  const enriched=C.enrichWithMaster(shared,midx);await BMMDB.replaceAllSalesRecords(enriched);return enriched;
+}
 async function syncAndLoadSharedInventory(apiUrl){
-  const shared=await fetchHistoryJsonp(apiUrl, "inventory");
+  const result=await fetchHistoryJsonp(apiUrl,"inventory");
+  const shared=result.records;
   if(!Array.isArray(shared))return 0;
-  const latestDate=[...new Set(shared.map(r=>String(r.snapshotDate||r.date||"")).filter(Boolean))].sort().at(-1)||"";
-  const latest=latestDate?shared.filter(r=>String(r.snapshotDate||r.date||"")===latestDate):[];
+  const {latestDate,rows:latest}=latestInventoryRows(shared);
   if(latest.length){
     const rows=latest.map(r=>({
       snapshotDate:latestDate,
@@ -542,25 +528,18 @@ async function syncAndLoadSharedInventory(apiUrl){
   }
   return latest.length;
 }
-function postInventoryForm(apiUrl,records){
-  return postApiForm(
-    apiUrl,
-    {
-      action:"inventory",
-      version:1,
-      records:(records||[]).map(r=>({
-        snapshotDate:r.snapshotDate,
-        store:r.store,
-        jan:r.jan||"",
-        sku:r.sku||"",
-        name:r.name||"",
-        stock:Number(r.stock)||0,
-        price:Number(r.price)||0
-      }))
-    },
-    "BMM_API_SAVE",
-    25000
-  );
+async function postInventoryForm(apiUrl,records){
+  const prepared=(records||[]).map(r=>({snapshotDate:r.snapshotDate,store:r.store,jan:r.jan||"",sku:r.sku||"",name:r.name||"",stock:Number(r.stock)||0,price:Number(r.price)||0}));
+  if(!prepared.length)throw new Error("保存対象の在庫データがありません。");
+  const token=await postApiForm(apiUrl,{action:"inventory",version:1,records:prepared},"BMM_API_SAVE",30000);
+  const expectedDate=String(prepared[0].snapshotDate||"");
+  for(let a=0;a<8;a++){
+    const result=await fetchHistoryJsonp(apiUrl,"inventory",token);
+    const latest=latestInventoryRows(result.records);
+    if(verifySaveToken(result,token)&&latest.latestDate===expectedDate&&latest.rows.length===prepared.length)return true;
+    await new Promise(r=>setTimeout(r,800));
+  }
+  throw new Error("共有在庫の保存確認ができませんでした。データは上書きせず、もう一度実行してください。");
 }
 async function fetchSheetGidRows(spreadsheetId,gid,label){
   const url=`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`;
