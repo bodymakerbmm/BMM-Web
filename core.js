@@ -345,13 +345,13 @@
       const key=[normalizeText(r.store),normalizeText(r.jan)].join("|");
       if(!shelfMap.has(key))shelfMap.set(key,[]);shelfMap.get(key).push(r);
     }
-    const result=[];
+    const result=[],unmatched=[];
     let matchedSales=0,matchedQty=0,matchedRows=0,excludedSales=0,excludedQty=0,excludedRows=0;
     const totalSales=salesRecords.reduce((s,r)=>s+r.sales,0),totalQty=salesRecords.reduce((s,r)=>s+r.qty,0);
     for(const sale of salesRecords){
       if(!sale.jan)continue;
       const key=[normalizeText(sale.store),normalizeText(sale.jan)].join("|"),allRows=shelfMap.get(key)||[];
-      if(!allRows.length)continue;
+      if(!allRows.length){unmatched.push(sale);continue;} // JANが棚データに1件も無い＝棚番号タブへの登録漏れ候補
 
       // 同一棚のDAT1行をまとめ、棚ごとの数量合計で主棚を決める。
       const byShelf=new Map();
@@ -372,7 +372,7 @@
       result.push({store:sale.store,date:sale.date,shelf:primary.shelf,jan:sale.jan,sku:sale.sku,name:sale.name,qty:sale.qty,sales:sale.sales});
     }
     const eligibleSales=Math.max(0,totalSales-excludedSales),eligibleQty=Math.max(0,totalQty-excludedQty),eligibleRows=Math.max(0,salesRecords.length-excludedRows);
-    return {records:result,matchedSales,matchedQty,matchedRows,excludedSales,excludedQty,excludedRows,totalSales,totalQty,totalRows:salesRecords.length,
+    return {records:result,unmatched,matchedSales,matchedQty,matchedRows,excludedSales,excludedQty,excludedRows,totalSales,totalQty,totalRows:salesRecords.length,
       coverage:eligibleSales?matchedSales/eligibleSales:0,qtyCoverage:eligibleQty?matchedQty/eligibleQty:0,rowCoverage:eligibleRows?matchedRows/eligibleRows:0};
   }
 
