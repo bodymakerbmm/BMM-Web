@@ -545,9 +545,14 @@ function postApiForm(apiUrl,payload,expectedType,timeoutMs=30000){
     // 以前は「iframeが読み込み完了したら成功」という不正確な判定をしており、
     // 実際は失敗していても成功扱いになるケースがあった。ここでは実際の応答内容を見て判定する。
     const onMessage=(ev)=>{
-      if(ev.source!==iframe.contentWindow)return;
+      // 以前はev.source（このiframe自身のwindowか）で厳密に絞り込んでいたが、
+      // Google Apps Script側のHTML応答は内部的にもう一段深いフレームから
+      // postMessageすることがあり、その場合ev.sourceが一致せず、実際には
+      // 届いている返事を毎回無視してしまう（＝毎回タイムアウトする）バグになっていた。
+      // ランダムなトークンでの一致確認だけで十分安全に本人確認できるため、それに絞る。
       const data=ev.data;
-      if(!data||data.type!==expectedType)return;
+      if(!data||typeof data!=="object")return;
+      if(data.type!==expectedType)return;
       if(String(data._bmmToken||"")!==token)return;
       finish(!!data.ok,data.message);
     };
