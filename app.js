@@ -604,14 +604,6 @@ async function syncAndLoadSharedInventory(apiUrl){
   }
   return latest.length;
 }
-async function postInventoryForm(apiUrl,records){
-  const prepared=(records||[]).map(r=>({snapshotDate:r.snapshotDate,store:r.store,jan:r.jan||"",sku:r.sku||"",name:r.name||"",stock:Number(r.stock)||0,price:Number(r.price)||0}));
-  if(!prepared.length)throw new Error("保存対象の在庫データがありません。");
-  // postApiFormがpostMessage応答を待って成否を確定するので、以前のような再確認ポーリングは不要。
-  // ②と同じ理由で、失敗時は少し待って自動リトライする。
-  await withRetry(()=>postApiForm(apiUrl,{action:"inventory",version:1,records:prepared},"BMM_API_SAVE",30000));
-  return true;
-}
 async function fetchSheetGidRows(spreadsheetId,gid,label){
   const url=`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`;
   const res=await fetch(url,{cache:"no-store"});
@@ -830,20 +822,40 @@ async function importStock(){
   let date=$("stockSnapshotDate").value||C.inferDateFromFilename(f.name);if(!date){$("stockImportMessage").textContent="在庫基準日を指定してください。";return;}
   const btn=$("importStockBtn");
   btn.disabled=true;
-  $("stockImportMessage").textContent="Excelを読み込み中…（ファイルが大きいと数秒かかります）";
+  $("stockImportMessage").textContent="Excelを読み込み中…（ファイルが大きいと数秒〜十数秒、画面が一瞬固まったように見えることがあります）";
+  // ここで一度ブラウザに描画の機会を与える。これが無いと、上のメッセージが表示される前に
+  // Excel解析の重い処理が始まってしまい、「反応がない」ように見えてしまう。
+  await new Promise(r=>setTimeout(r,30));
   try{
     const rows=await rowsFromSpreadsheetFile(f,"inventory");
     let records=C.inventoryRowsToRecords(rows,date,state.config.stores.map(s=>s.name));if(!records.length)throw new Error("在庫データを判定できません。");records=C.compactInventoryRecords(records);
-    $("stockImportMessage").textContent=`${records.length}件を判定しました。保存中…`;
-    const apiUrl=await discoverHistoryApiUrl();
-    if(apiUrl){
-      await postInventoryForm(apiUrl,records);
-      state.config.historyApiUrl=apiUrl;
-      await saveConfig();
-    }
+    const storeCount=state.config.stores.length||1;
+    $("stockImportMessage").textContent=`商品数 約${Math.round(records.length/storeCount)}件 × 店舗${storeCount} = ${records.length}件を判定しました。端末に保存中…`;
+
+    // ①端末への保存を必ず先に行う。以前は共有API側の保存を先にしていたため、
+    // 共有API側がタイムアウトすると端末にも保存されず「何も残らない」状態になっていた。
+    // 端末保存はこの端末だけの操作なので、通信状況に関係なく確実に完了する。
     await BMMDB.replaceStockSnapshot(date,records);
     await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"在庫",target:date,rows:records.length});
-    await loadState();renderAll();$("stockSnapshotSelect").value=date;renderStock();$("stockImportMessage").textContent=apiUrl?`${date}：${records.length}件を保存しました。0在庫も含めて共有保存済みです。`:`${date}：${records.length}件を端末に保存しました。共有API未設定です。`;
+    await loadState();renderAll();$("stockSnapshotSelect").value=date;renderStock();
+    $("stockImportMessage").textContent=`${date}：${records.length}件を端末に保存しました。共有サーバーへの送信中…`;
+
+    // ②共有サーバーへの送信は別扱いにする。ここが失敗しても、上で端末保存は既に完了している。
+    const apiUrl=await discoverHistoryApiUrl();
+    if(apiUrl){
+      try{
+        // 在庫は件数が多く（商品数×店舗数）処理に時間がかかりやすいため、タイムアウトを長め(90秒)・
+        // 自動リトライは1回だけにする（毎回同じ最新スナップショットで上書きするだけなので再送しても安全）。
+        await withRetry(()=>postApiForm(apiUrl,{action:"inventory",version:1,records:records.map(r=>({snapshotDate:r.snapshotDate,store:r.store,jan:r.jan||"",sku:r.sku||"",name:r.name||"",stock:Number(r.stock)||0,price:Number(r.price)||0}))},"BMM_API_SAVE",90000),1,3000);
+        state.config.historyApiUrl=apiUrl;
+        await saveConfig();
+        $("stockImportMessage").textContent=`${date}：${records.length}件を端末保存・共有保存の両方に反映しました（0在庫も含めて共有保存済みです）。`;
+      }catch(e){
+        $("stockImportMessage").textContent=`${date}：${records.length}件はこの端末には保存済みです。ただし共有サーバーへの反映は失敗しました（${e.message}）。他の端末にはまだ反映されていないので、電波・回線が良い時にもう一度「在庫Excelを取り込む」を実行してください。`;
+      }
+    }else{
+      $("stockImportMessage").textContent=`${date}：${records.length}件を端末に保存しました。共有API未設定です。`;
+    }
   }catch(e){$("stockImportMessage").textContent=e.message;}
   finally{btn.disabled=false;}
 }
