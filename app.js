@@ -193,8 +193,27 @@ function renderAll(){
   $("totalSales").textContent=yen(k.sales);$("totalQty").textContent=num(k.qty);$("productCount").textContent=num(k.productCount);$("avgPrice").textContent=yen(k.avgPrice);
   $("topProducts").innerHTML=products.slice(0,10).map((p,i)=>`<div class="rank"><span class="rank-no">${i+1}</span><div class="rank-main">${esc(p.name)}<small>${esc(p.sku||p.jan)} / ${num(p.qty)}点</small></div><div class="rank-value">${yen(p.sales)}</div></div>`).join("")||'<div class="empty">データなし</div>';
   $("storeSummary").innerHTML=stores.map((s,i)=>`<div class="rank"><span class="rank-no">${i+1}</span><div class="rank-main">${esc(s.key)}<small>${num(s.qty)}点 / ${num(s.productCount)}商品</small></div><div class="rank-value">${yen(s.sales)}</div></div>`).join("")||'<div class="empty">データなし</div>';
-  renderDaily(r);renderProducts(products);renderRanking(products);renderStores(stores);renderShelves(r);renderABC(r);renderStockSnapshots();renderStock();renderInventoryAlerts();renderOrderCandidates();renderKPIDetail();renderHistory();
+  renderAnomalyWarnings();renderDaily(r);renderProducts(products);renderRanking(products);renderStores(stores);renderShelves(r);renderABC(r);renderStockSnapshots();renderStock();renderInventoryAlerts();renderOrderCandidates();renderKPIDetail();renderHistory();
   $("setupNotice").hidden=state.config.stores.length>0||state.records.length>0;updateStatus();
+}
+function renderAnomalyWarnings(){
+  // 画面上の絞り込みに関係なく、常に全店舗・直近データで判定する（見ている期間によって警告が出たり消えたりしないように）。
+  const today=C.localToday();
+  const stores=[...new Set(state.config.stores.map(s=>s.name))];
+  const rows=[];
+  for(const store of stores){
+    const cur=C.filterRecords(state.records,{store,from:C.shiftDate(today,-6),to:today});
+    const prev=C.filterRecords(state.records,{store,from:C.shiftDate(today,-13),to:C.shiftDate(today,-7)});
+    const curSales=cur.reduce((s,r)=>s+r.sales,0),prevSales=prev.reduce((s,r)=>s+r.sales,0);
+    // 前の7日間に実績があり、直近7日間がその20%未満（ほぼ0含む）＝取込漏れの可能性が高いと判断。
+    if(prevSales>0&&curSales<prevSales*0.2){
+      rows.push({store,curSales,prevSales,drop:1-curSales/prevSales});
+    }
+  }
+  const el=$("anomalyWarnings");
+  if(!el)return;
+  if(!rows.length){el.innerHTML="";return;}
+  el.innerHTML=`<div class="notice"><strong>⚠ 売上データの取り込み漏れの可能性があります</strong><br>直近7日間の売上が、前の7日間に比べて大きく減っている店舗があります。売上シートの共有設定やURLをご確認ください。<br>${rows.map(r=>`${esc(r.store)}：直近7日 ${yen(r.curSales)} / 前の7日 ${yen(r.prevSales)}（${(r.drop*100).toFixed(0)}%減）`).join("<br>")}</div>`;
 }
 function renderDaily(records){
   const daily=C.aggregateBy(records,"date").filter(x=>x.key!=="未設定").sort((a,b)=>a.key.localeCompare(b.key)),max=Math.max(1,...daily.map(x=>x.sales));
@@ -234,6 +253,7 @@ function renderShelves(sales){
   const filter={store:$("storeFilter").value};
   const configuredStores=new Map(state.config.stores.map(s=>[s.name,s]));
   let allocated=[],matchedSales=0,excludedSales=0,totalSales=sales.reduce((sum,r)=>sum+r.sales,0);
+  let unmatchedAll=[]; // ⑦棚データに1件も登録されていなかった商品の売上（登録漏れ候補）
   const targetStores=filter.store?[filter.store]:[...new Set(sales.map(r=>r.store).filter(Boolean))];
 
   for(const storeName of targetStores){
@@ -254,6 +274,7 @@ function renderShelves(sales){
       allocated.push(...result.records);
       matchedSales+=result.matchedSales;
       excludedSales+=result.excludedSales||0;
+      if(result.unmatched?.length)unmatchedAll.push(...result.unmatched.map(r=>({...r,store:storeName})));
     }
   }
 
@@ -285,6 +306,19 @@ function renderShelves(sales){
         .map(p=>`${p.name}${p.sku?`（${p.sku}）`:""}`).join(" / ");
       return [num(i+1),esc(x.key),yen(x.sales),num(Math.round(x.qty)),num(x.productCount),yen(x.qty?x.sales/x.qty:0),esc(tops)];
     })
+  );
+
+  // ⑦棚データ未登録（登録漏れ候補）を商品単位で集計し、売上が大きい順に表示
+  const unmatchedByProduct=new Map();
+  for(const r of unmatchedAll){
+    const key=C.normalizeText(r.jan||r.sku);if(!key)continue;
+    const x=unmatchedByProduct.get(key)||{name:r.name||"（商品名未登録）",sku:r.sku||"",jan:r.jan||"",stores:new Set(),sales:0,qty:0};
+    x.sales+=r.sales;x.qty+=r.qty;x.stores.add(r.store);unmatchedByProduct.set(key,x);
+  }
+  const unmatchedList=[...unmatchedByProduct.values()].sort((a,b)=>b.sales-a.sales).slice(0,20);
+  $("shelfUnmatched").innerHTML=table(
+    [{label:"商品名"},{label:"品番"},{label:"JAN"},{label:"店舗"},{label:"売上",num:true},{label:"売れ数",num:true}],
+    unmatchedList.map(x=>[esc(x.name),esc(x.sku),esc(x.jan),esc([...x.stores].join("・")),yen(x.sales),num(x.qty)])
   );
 }
 function renderABC(records){
@@ -438,7 +472,35 @@ function renderHistory(){
     ["売上保存期間",`${sr.from||"未保存"} ～ ${sr.to||"未保存"}`],["売上行数",num(state.records.length)],["最新棚データ行数",num(state.shelfRows.length)],["棚履歴行数",num(state.shelfHistory.length)],
     ["最新在庫基準日",stockDates.length?stockDates.at(-1):"未保存"],["在庫行数",num(state.stockRows.length)],["商品マスタ",`${num(state.masterRows.length)}件`],["3年共有売上履歴",state.config.historyApiUrl?"接続設定済み":"未設定"]
   ].map(x=>`<div class="history-stat"><span>${x[0]}</span><strong>${x[1]}</strong></div>`).join("");
+  renderStoreSyncStatus();
   $("syncLogTable").innerHTML=table([{label:"日時"},{label:"種別"},{label:"対象"},{label:"件数",num:true}],state.syncLog.map(l=>[esc(new Date(l.syncedAt).toLocaleString("ja-JP")),esc(l.type||"売上"),esc(l.store||l.target||""),num(l.rows||0)]));
+}
+function renderStoreSyncStatus(){
+  const el=$("storeSyncStatus");if(!el)return;
+  const stores=[...new Set(state.config.stores.map(s=>s.name))];
+  const lastOk=new Map(),lastErr=new Map();
+  for(const l of state.syncLog){
+    if(l.type==="売上"&&l.store){
+      if(!lastOk.has(l.store)||l.syncedAt>lastOk.get(l.store).syncedAt)lastOk.set(l.store,l);
+    }else if(l.type==="売上エラー"&&l.store){
+      const name=String(l.store).split("（")[0];
+      if(!lastErr.has(name)||l.syncedAt>lastErr.get(name).syncedAt)lastErr.set(name,l);
+    }
+  }
+  const now=Date.now();
+  el.innerHTML=table(
+    [{label:"店舗"},{label:"最終成功"},{label:"件数",num:true},{label:"状態"}],
+    stores.map(name=>{
+      const ok=lastOk.get(name),err=lastErr.get(name);
+      const okTime=ok?new Date(ok.syncedAt):null;
+      const hoursSince=okTime?(now-okTime.getTime())/3600000:Infinity;
+      let status='<span style="color:#1a7f37">正常</span>';
+      if(!ok)status='<span style="color:#c0392b">同期履歴なし</span>';
+      else if(err&&new Date(err.syncedAt)>okTime){const detail=esc(String(err.store).split("（")[1]?.replace(/）$/,"")||"");status=`<span style="color:#c0392b">直近エラー：${detail}</span>`;}
+      else if(hoursSince>26)status=`<span style="color:#c0392b">${Math.floor(hoursSince/24)}日以上更新なし</span>`;
+      return [esc(name),ok?esc(okTime.toLocaleString("ja-JP")):"—",ok?num(ok.rows||0):"—",status];
+    })
+  );
 }
 function updateStatus(msg){
   $("syncStatus").textContent=msg||(state.lastSynced?`最終同期 ${new Date(state.lastSynced).toLocaleString("ja-JP")}`:"未同期");
@@ -477,37 +539,51 @@ function postApiForm(apiUrl,payload,expectedType,timeoutMs=30000){
     payload={...payload,_bmmToken:token}; input.value=JSON.stringify(payload);
     form.appendChild(input); document.body.append(iframe,form);
     let done=false;
-    const cleanup=()=>{clearTimeout(timer);iframe.removeEventListener("load",onLoad);setTimeout(()=>{form.remove();iframe.remove();},0);};
+    const cleanup=()=>{clearTimeout(timer);window.removeEventListener("message",onMessage);setTimeout(()=>{form.remove();iframe.remove();},0);};
     const finish=(ok,message)=>{if(done)return;done=true;cleanup();ok?resolve(token):reject(new Error(message||"共有データAPIへの保存要求に失敗しました。"));};
-    const onLoad=()=>finish(true);
-    iframe.addEventListener("load",onLoad);
+    // Google Apps Script側(apiSaveResponse_)は保存の成否をpostMessageで直接この画面に返してくる。
+    // 以前は「iframeが読み込み完了したら成功」という不正確な判定をしており、
+    // 実際は失敗していても成功扱いになるケースがあった。ここでは実際の応答内容を見て判定する。
+    const onMessage=(ev)=>{
+      if(ev.source!==iframe.contentWindow)return;
+      const data=ev.data;
+      if(!data||data.type!==expectedType)return;
+      if(String(data._bmmToken||"")!==token)return;
+      finish(!!data.ok,data.message);
+    };
+    window.addEventListener("message",onMessage);
     const timer=setTimeout(()=>finish(false,"共有データAPIへの保存要求がタイムアウトしました。"),timeoutMs);
     try{form.submit();}catch(e){finish(false,String(e&&e.message||e));}
   });
 }
-function verifySaveToken(shared,token){return !!token && !!shared && shared.saveToken===token;}
 function latestInventoryRows(records){const rs=Array.isArray(records)?records:[],latestDate=[...new Set(rs.map(r=>String(r.snapshotDate||r.date||"")).filter(Boolean))].sort().at(-1)||"";return {latestDate,rows:latestDate?rs.filter(r=>String(r.snapshotDate||r.date||"")===latestDate):[]};}
 function postHistoryForm(apiUrl,records){return postApiForm(apiUrl,{version:1,records:prepareHistorySyncRecords(records)},"BMM_API_SAVE",30000);}
-function fetchHistoryJsonp(apiUrl,action="history",verifyToken=""){return new Promise((resolve,reject)=>{const cb=`__bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`,sc=document.createElement("script");let done=false;const clean=()=>{try{delete window[cb];}catch{}sc.remove();},timer=setTimeout(()=>{if(done)return;done=true;clean();reject(new Error("共有データAPIの確認がタイムアウトしました。"));},15000);window[cb]=p=>{if(done)return;done=true;clearTimeout(timer);clean();p&&p.ok===true?resolve({records:Array.isArray(p.records)?p.records:[],saveToken:String(p.saveToken||"")}):reject(new Error(p?.error||"共有データAPIの読込に失敗しました。"));};sc.onerror=()=>{if(done)return;done=true;clearTimeout(timer);clean();reject(new Error("共有データAPIへ接続できません。"));};let u=`${apiUrl}${apiUrl.includes("?")?"&":"?"}action=${encodeURIComponent(action)}&callback=${encodeURIComponent(cb)}&_=${Date.now()}`;if(verifyToken)u+=`&verifyToken=${encodeURIComponent(verifyToken)}`;sc.src=u;document.head.appendChild(sc);});}
-function historyDayKeys(rs){return new Set((rs||[]).filter(r=>r.store&&r.date).map(r=>`${r.store}|${r.date}`));}
+function fetchHistoryJsonp(apiUrl,action="history"){return new Promise((resolve,reject)=>{const cb=`__bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`,sc=document.createElement("script");let done=false;const clean=()=>{try{delete window[cb];}catch{}sc.remove();},timer=setTimeout(()=>{if(done)return;done=true;clean();reject(new Error("共有データAPIの確認がタイムアウトしました。"));},15000);window[cb]=p=>{if(done)return;done=true;clearTimeout(timer);clean();p&&p.ok===true?resolve({records:Array.isArray(p.records)?p.records:[]}):reject(new Error(p?.error||"共有データAPIの読込に失敗しました。"));};sc.onerror=()=>{if(done)return;done=true;clearTimeout(timer);clean();reject(new Error("共有データAPIへ接続できません。"));};const u=`${apiUrl}${apiUrl.includes("?")?"&":"?"}action=${encodeURIComponent(action)}&callback=${encodeURIComponent(cb)}&_=${Date.now()}`;sc.src=u;document.head.appendChild(sc);});}
+
+// ②混雑対策：開店直後などに複数店舗が同時に更新を押すと、共有データAPI側の順番待ち
+// （LockService）で一時的に失敗することがある。少し待って自動で再試行する。
+// 同じ内容を再送しても保存側は「その日の集計を置き換える」処理なので、再試行しても重複は発生しない。
+async function withRetry(fn,times=2,delayMs=1500){
+  let lastErr;
+  for(let i=0;i<=times;i++){
+    try{return await fn();}catch(e){lastErr=e;if(i<times)await new Promise(r=>setTimeout(r,delayMs*(i+1)));}
+  }
+  throw lastErr;
+}
+
 async function syncAndLoadSharedHistory(apiUrl,fresh,midx){
-  const prepared=prepareHistorySyncRecords(fresh),expected=historyDayKeys(prepared);
-  let token="";
-  if(prepared.length)token=await postHistoryForm(apiUrl,prepared);
-  let shared=[];
-  for(let a=0;a<8;a++){
-    const result=await fetchHistoryJsonp(apiUrl,"history",token);
-    shared=Array.isArray(result.records)?result.records:[];
-    const actual=historyDayKeys(shared);
-    if(!token || (verifySaveToken(result,token)&&[...expected].every(k=>actual.has(k))))break;
-    await new Promise(r=>setTimeout(r,800));
-  }
-  if(token){
-    const result=await fetchHistoryJsonp(apiUrl,"history",token);
-    if(!verifySaveToken(result,token))throw new Error("共有売上履歴の保存確認ができませんでした。もう一度実行してください。");
-    shared=result.records||[];
-  }
-  const enriched=C.enrichWithMaster(shared,midx);await BMMDB.replaceAllSalesRecords(enriched);return enriched;
+  const prepared=prepareHistorySyncRecords(fresh);
+  // 保存の成否はpostApiForm内でGoogle側からのpostMessage応答を見て確定させている（①の修正）。
+  // ここで独自に何度も読み直して確認する必要はなくなった。
+  if(prepared.length)await withRetry(()=>postHistoryForm(apiUrl,prepared));
+  const result=await fetchHistoryJsonp(apiUrl,"history");
+  const shared=Array.isArray(result.records)?result.records:[];
+  const enriched=C.enrichWithMaster(shared,midx);
+  // ③の修正：以前は端末内の売上をここで毎回まるごと置き換えていた（replaceAllSalesRecords）ため、
+  // 共有API側の応答が一時的に欠けただけで全店舗のローカルデータが欠損する構造だった。
+  // 追記・上書き（upsert）に変更し、既存の保存済みデータをむやみに消さないようにする。
+  await BMMDB.upsertSalesRecords(enriched);
+  return enriched;
 }
 async function syncAndLoadSharedInventory(apiUrl){
   const result=await fetchHistoryJsonp(apiUrl,"inventory");
@@ -531,15 +607,10 @@ async function syncAndLoadSharedInventory(apiUrl){
 async function postInventoryForm(apiUrl,records){
   const prepared=(records||[]).map(r=>({snapshotDate:r.snapshotDate,store:r.store,jan:r.jan||"",sku:r.sku||"",name:r.name||"",stock:Number(r.stock)||0,price:Number(r.price)||0}));
   if(!prepared.length)throw new Error("保存対象の在庫データがありません。");
-  const token=await postApiForm(apiUrl,{action:"inventory",version:1,records:prepared},"BMM_API_SAVE",30000);
-  const expectedDate=String(prepared[0].snapshotDate||"");
-  for(let a=0;a<8;a++){
-    const result=await fetchHistoryJsonp(apiUrl,"inventory",token);
-    const latest=latestInventoryRows(result.records);
-    if(verifySaveToken(result,token)&&latest.latestDate===expectedDate&&latest.rows.length===prepared.length)return true;
-    await new Promise(r=>setTimeout(r,800));
-  }
-  throw new Error("共有在庫の保存確認ができませんでした。データは上書きせず、もう一度実行してください。");
+  // postApiFormがpostMessage応答を待って成否を確定するので、以前のような再確認ポーリングは不要。
+  // ②と同じ理由で、失敗時は少し待って自動リトライする。
+  await withRetry(()=>postApiForm(apiUrl,{action:"inventory",version:1,records:prepared},"BMM_API_SAVE",30000));
+  return true;
 }
 async function fetchSheetGidRows(spreadsheetId,gid,label){
   const url=`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${encodeURIComponent(gid)}`;
@@ -645,7 +716,7 @@ async function syncAll(options={}){
   await repairSavedSalesData();let commonSync=null;try{commonSync=await syncCommonMasterAndShelves();}catch(e){console.warn(e);updateStatus(`共通データ同期失敗: ${e.message}`);if(!options.silent)alert(`共通データ同期失敗
 ${e.message}`);}
   if(!state.config.stores.length){if(!options.silent)$("settingsDialog").showModal();updateStatus("店舗設定が必要です");return;}$("refreshBtn").disabled=true;updateStatus(options.silent?"自動更新中…":"同期中…");
-  try{const midx=await masterIndex(),apiUrl=await discoverHistoryApiUrl(),results=await Promise.allSettled(state.config.stores.map(s=>fetchStore(s,midx)));let total=0,errors=[],updated=[],fresh=[];const warnings=[];for(let i=0;i<results.length;i++){const r=results[i],s=state.config.stores[i];if(r.status==="rejected"){errors.push(r.reason.message);continue;}const p=r.value;fresh.push(...p.records);total+=p.records.length;updated.push(`${s.name} ${p.records.length}行`);if(p.ignored||p.invalid.length)warnings.push(`${s.name}: ${p.records.length}行取込 / 空行等${p.ignored}行無視 / 不正${p.invalid.length}行除外`);}
+  try{const midx=await masterIndex(),apiUrl=await discoverHistoryApiUrl(),results=await Promise.allSettled(state.config.stores.map(s=>fetchStore(s,midx)));let total=0,errors=[],updated=[],fresh=[];const warnings=[];for(let i=0;i<results.length;i++){const r=results[i],s=state.config.stores[i];if(r.status==="rejected"){errors.push(r.reason.message);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"売上エラー",store:`${s.name}（${String(r.reason.message||"").slice(0,60)}）`,rows:0});continue;}const p=r.value;fresh.push(...p.records);total+=p.records.length;updated.push(`${s.name} ${p.records.length}行`);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"売上",store:s.name,rows:p.records.length});if(p.ignored||p.invalid.length)warnings.push(`${s.name}: ${p.records.length}行取込 / 空行等${p.ignored}行無視 / 不正${p.invalid.length}行除外`);}
     let sharedCount=0,sharedStockCount=0;
     if(apiUrl){
       try{
@@ -674,12 +745,51 @@ ${warnings.join("\
   }catch(e){updateStatus(`更新失敗：${String(e.message||e).slice(0,100)}`);if(!options.silent)alert(e.message);else console.error(e);}finally{$("refreshBtn").disabled=false;}
 }
 
+async function forceFullResync(){
+  if(!confirm("端末に保存されている売上履歴を、共有サーバー側の最新データで完全に置き換えます。\n通常は不要な操作です。よろしいですか？"))return;
+  const btn=$("forceResyncBtn"),msg=$("forceResyncMessage");
+  btn.disabled=true;msg.textContent="再取得中…";
+  try{
+    const apiUrl=await discoverHistoryApiUrl();
+    if(!apiUrl){msg.textContent="共有データAPIが設定されていません。";return;}
+    const midx=await masterIndex();
+    const result=await fetchHistoryJsonp(apiUrl,"history");
+    const shared=Array.isArray(result.records)?result.records:[];
+    const enriched=C.enrichWithMaster(shared,midx);
+    await BMMDB.replaceAllSalesRecords(enriched);
+    const invCount=await syncAndLoadSharedInventory(apiUrl);
+    await loadState();renderAll();
+    msg.textContent=`完了：売上${enriched.length}行・在庫${invCount}件を共有サーバーの内容で置き換えました。`;
+  }catch(e){
+    msg.textContent=`失敗：${e.message}`;
+  }finally{
+    btn.disabled=false;
+  }
+}
 function addStoreRow(data={}){
   const n=$("storeRowTemplate").content.firstElementChild.cloneNode(true);
   n.querySelector(".store-name").value=data.name||"";
   n.querySelector(".store-url").value=data.url||"";
   n.querySelector(".store-excluded-shelves").value=data.excludedShelves||"";
   n.querySelector(".remove-store").onclick=()=>n.remove();
+  const resultEl=n.querySelector(".test-store-result");
+  const testBtn=n.querySelector(".test-store");
+  if(testBtn){
+    testBtn.onclick=async()=>{
+      const url=n.querySelector(".store-url").value.trim(),name=n.querySelector(".store-name").value.trim()||"店舗";
+      if(!url){if(resultEl){resultEl.textContent="URLを入力してください。";resultEl.style.color="";}return;}
+      if(resultEl){resultEl.textContent="確認中…";resultEl.style.color="";}
+      testBtn.disabled=true;
+      try{
+        const rows=await fetchCsvRows(url,name);
+        if(resultEl){resultEl.textContent=`OK：${rows.length}行読み込めました。`;resultEl.style.color="#1a7f37";}
+      }catch(e){
+        if(resultEl){resultEl.textContent=`NG：${e.message}`;resultEl.style.color="#c0392b";}
+      }finally{
+        testBtn.disabled=false;
+      }
+    };
+  }
   $("storeRows").appendChild(n);
 }
 function openSettings(){$("storeRows").innerHTML="";(state.config.stores.length?state.config.stores:[{}]).forEach(addStoreRow);$("historyApiUrl").value=state.config.historyApiUrl||"";$("settingsMessage").textContent="";$("settingsDialog").showModal();}
@@ -718,7 +828,13 @@ function openImport(){
 async function importStock(){
   const f=$("stockFileInput").files[0];if(!f){$("stockImportMessage").textContent="在庫Excelを選択してください。";return;}
   let date=$("stockSnapshotDate").value||C.inferDateFromFilename(f.name);if(!date){$("stockImportMessage").textContent="在庫基準日を指定してください。";return;}
-  try{const rows=await rowsFromSpreadsheetFile(f,"inventory");let records=C.inventoryRowsToRecords(rows,date,state.config.stores.map(s=>s.name));if(!records.length)throw new Error("在庫データを判定できません。");records=C.compactInventoryRecords(records);
+  const btn=$("importStockBtn");
+  btn.disabled=true;
+  $("stockImportMessage").textContent="Excelを読み込み中…（ファイルが大きいと数秒かかります）";
+  try{
+    const rows=await rowsFromSpreadsheetFile(f,"inventory");
+    let records=C.inventoryRowsToRecords(rows,date,state.config.stores.map(s=>s.name));if(!records.length)throw new Error("在庫データを判定できません。");records=C.compactInventoryRecords(records);
+    $("stockImportMessage").textContent=`${records.length}件を判定しました。保存中…`;
     const apiUrl=await discoverHistoryApiUrl();
     if(apiUrl){
       await postInventoryForm(apiUrl,records);
@@ -729,8 +845,22 @@ async function importStock(){
     await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"在庫",target:date,rows:records.length});
     await loadState();renderAll();$("stockSnapshotSelect").value=date;renderStock();$("stockImportMessage").textContent=apiUrl?`${date}：${records.length}件を保存しました。0在庫も含めて共有保存済みです。`:`${date}：${records.length}件を端末に保存しました。共有API未設定です。`;
   }catch(e){$("stockImportMessage").textContent=e.message;}
+  finally{btn.disabled=false;}
 }
 
+function exportOrderCandidatesCSV(){
+  const periodDays=Math.max(1,C.dateSpanDays(state.filtered));
+  const rows=currentInventoryProductRows().map(x=>{const r=C.reorderSuggestion(x.qty,x.stock,periodDays,2);return {...x,...r};})
+    .filter(x=>x.orderQty>0&&x.qty>0)
+    .sort((a,b)=>(b.orderQty-a.orderQty)||(b.weeklyQty-a.weeklyQty)||(b.sales-a.sales));
+  if(!rows.length){alert("発注候補がありません。");return;}
+  const csvEscape=v=>{const s=String(v??"");return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  const header=["商品名","品番","JAN","期間売れ数","週換算売れ数","現在庫","目標在庫","発注候補"];
+  const lines=[header.join(",")];
+  for(const x of rows)lines.push([x.name,x.sku,x.jan,x.qty,x.weeklyQty.toFixed(1),x.stock,x.target,x.orderQty].map(csvEscape).join(","));
+  const blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv"}),url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download=`発注候補_${C.localToday()}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
 async function exportAll(){
   const d=await BMMDB.exportAll(),payload={format:"BMM-Web-V2",version:APP_VERSION,exportedAt:new Date().toISOString(),...d},blob=new Blob([JSON.stringify(payload)],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");
   a.href=url;a.download=`BMM全データ_${C.localToday()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -747,6 +877,8 @@ function bind(){
   $("productSearch").oninput=()=>renderProducts(C.aggregateProducts(state.filtered).sort((a,b)=>b.sales-a.sales));$("rankingType").onchange=()=>renderRanking(C.aggregateProducts(state.filtered));
   $("comparePeriodsBtn").onclick=comparePeriods;$("stockSnapshotSelect").onchange=()=>{renderStock();renderProducts(C.aggregateProducts(state.filtered));};
   $("exportHistoryBtn").onclick=exportAll;$("importHistoryInput").onchange=async e=>{if(e.target.files[0])try{await importAll(e.target.files[0]);}catch(err){alert(err.message);}e.target.value="";};
+  if($("forceResyncBtn"))$("forceResyncBtn").onclick=forceFullResync;
+  if($("exportOrdersBtn"))$("exportOrdersBtn").onclick=exportOrderCandidatesCSV;
   $("stockFileInput").onchange=e=>{const f=e.target.files[0],d=f&&C.inferDateFromFilename(f.name);if(d)$("stockSnapshotDate").value=d;};
   document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab,.tab-panel").forEach(x=>x.classList.remove("active"));b.classList.add("active");$(b.dataset.tab).classList.add("active");});
 }
@@ -764,5 +896,15 @@ async function start(){
     await syncAll({silent:true});
   }
 }
-start().catch(e=>{console.error(e);updateStatus("起動エラー");alert(`BMM起動エラー\n${e.message}`);});
+start().catch(e=>{
+  console.error(e);
+  updateStatus("起動エラー");
+  const msg=String(e&&e.message||e);
+  const isStorageIssue=e?.name==="SecurityError"||/indexeddb|quota/i.test(msg);
+  if(isStorageIssue){
+    alert("BMM起動エラー\nこの端末・ブラウザではデータ保存機能（IndexedDB）が使えないため起動できません。\nシークレット/プライベートモードで開いていないか、ブラウザのストレージ制限設定をご確認のうえ、通常モードのSafari/Chromeで開いてください。");
+  }else{
+    alert(`BMM起動エラー\n${msg}`);
+  }
+});
 })();
