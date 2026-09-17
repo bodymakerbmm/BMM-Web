@@ -817,6 +817,31 @@ function openImport(){
   renderStoreOptions();const today=C.localToday();if(!$("stockSnapshotDate").value)$("stockSnapshotDate").value=today;
   $("stockImportMessage").textContent="";$("importDataDialog").showModal();
 }
+// 在庫データを店舗ごとに分けて順番に共有サーバーへ送る。
+// 1回のリクエストが大きすぎるとタイムアウトしやすいため、店舗単位（数千件程度）に分割する。
+// Code.gs側は「送られてきた店舗だけ入れ替え、他店舗は残す」動きになっているので、
+// 分割して送っても他店舗のデータは消えない。
+async function syncInventoryToShared(apiUrl,records){
+  const byStore=new Map();
+  for(const r of records){
+    const k=r.store||"";
+    if(!byStore.has(k))byStore.set(k,[]);
+    byStore.get(k).push(r);
+  }
+  const stores=[...byStore.keys()];
+  const failed=[];
+  for(let i=0;i<stores.length;i++){
+    const store=stores[i];
+    $("stockImportMessage").textContent=`共有サーバーへ送信中…（${i+1}/${stores.length}店舗：${store}）`;
+    const chunkRecords=byStore.get(store).map(r=>({snapshotDate:r.snapshotDate,store:r.store,jan:r.jan||"",sku:r.sku||"",name:r.name||"",stock:Number(r.stock)||0,price:Number(r.price)||0}));
+    try{
+      await withRetry(()=>postApiForm(apiUrl,{action:"inventory",version:1,records:chunkRecords},"BMM_API_SAVE",90000),1,3000);
+    }catch(e){
+      failed.push(`${store}（${e.message}）`);
+    }
+  }
+  return {total:stores.length,failed};
+}
 async function importStock(){
   const f=$("stockFileInput").files[0];if(!f){$("stockImportMessage").textContent="在庫Excelを選択してください。";return;}
   let date=$("stockSnapshotDate").value||C.inferDateFromFilename(f.name);if(!date){$("stockImportMessage").textContent="在庫基準日を指定してください。";return;}
@@ -844,12 +869,14 @@ async function importStock(){
     const apiUrl=await discoverHistoryApiUrl();
     if(apiUrl){
       try{
-        // 在庫は件数が多く（商品数×店舗数）処理に時間がかかりやすいため、タイムアウトを長め(90秒)・
-        // 自動リトライは1回だけにする（毎回同じ最新スナップショットで上書きするだけなので再送しても安全）。
-        await withRetry(()=>postApiForm(apiUrl,{action:"inventory",version:1,records:records.map(r=>({snapshotDate:r.snapshotDate,store:r.store,jan:r.jan||"",sku:r.sku||"",name:r.name||"",stock:Number(r.stock)||0,price:Number(r.price)||0}))},"BMM_API_SAVE",90000),1,3000);
+        const result=await syncInventoryToShared(apiUrl,records);
         state.config.historyApiUrl=apiUrl;
         await saveConfig();
-        $("stockImportMessage").textContent=`${date}：${records.length}件を端末保存・共有保存の両方に反映しました（0在庫も含めて共有保存済みです）。`;
+        if(result.failed.length){
+          $("stockImportMessage").textContent=`${date}：${records.length}件はこの端末には保存済みです。共有サーバーへの反映は一部の店舗で失敗しました：${result.failed.join("、")}。成功した店舗はそのままで大丈夫です。電波・回線が良い時に、もう一度「在庫Excelを取り込む」を実行すれば失敗した店舗だけ再送されます。`;
+        }else{
+          $("stockImportMessage").textContent=`${date}：${records.length}件を端末保存・共有保存の両方に反映しました（0在庫も含めて共有保存済みです）。`;
+        }
       }catch(e){
         $("stockImportMessage").textContent=`${date}：${records.length}件はこの端末には保存済みです。ただし共有サーバーへの反映は失敗しました（${e.message}）。他の端末にはまだ反映されていないので、電波・回線が良い時にもう一度「在庫Excelを取り込む」を実行してください。`;
       }
