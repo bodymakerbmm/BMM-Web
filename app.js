@@ -171,7 +171,14 @@ async function loadState(){
   state.masterRows=await BMMDB.getAll(BMMDB.stores.master);
   state.syncLog=await BMMDB.getSyncLog();
   state.lastSynced=await BMMDB.getMeta("lastSynced")||"";
-  state.filtered=[...state.records];
+  // 以前はここで無条件に全期間を表示していたため、日付を絞り込んでいても
+  // 同期(loadState呼び出し)のたびに絞り込みが消えて全期間表示に戻ってしまっていた。
+  // 現在画面で選択されている店舗・期間をそのまま尊重する。
+  state.filtered=C.filterRecords(state.records,{
+    store:$("storeFilter")?.value||"",
+    from:$("dateFrom")?.value||"",
+    to:$("dateTo")?.value||""
+  });
 }
 async function saveConfig(){await BMMDB.setMeta("config",state.config);}
 
@@ -933,7 +940,15 @@ async function start(){
   await restorePersistentReferenceData();
   await loadState();
   bind();
-  renderAll();
+  // 初回表示のデフォルト期間を「今月1日〜今日」にする。以前は日付未指定＝全期間の
+  // 累計になっていて、開いたときの数字が直感と合わなかったため。
+  // すでに日付が入っている場合（前回セッションの値が残っている等）は上書きしない。
+  if(!$("dateFrom").value&&!$("dateTo").value){
+    const today=C.localToday();
+    $("dateFrom").value=today.slice(0,8)+"01";
+    $("dateTo").value=today;
+  }
+  applyFilter();
   if(!state.config.stores.length&&!state.records.length){openSettings();return;}
   if(state.config.stores.length&&!new URLSearchParams(location.search).has("bmm_test")){
     await syncSharedInventoryAtStartup();
