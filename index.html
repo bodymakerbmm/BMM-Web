@@ -42,6 +42,7 @@
 </nav>
 
 <section id="dashboard" class="tab-panel active">
+<div id="anomalyWarnings"></div>
 <div class="grid-2"><article class="card"><h2>売上上位商品</h2><div id="topProducts"></div></article><article class="card"><h2>店舗別売上</h2><div id="storeSummary"></div></article></div>
 <article class="card"><h2>日別推移</h2><div id="dailyTrend" class="bar-chart"></div></article>
 </section>
@@ -57,6 +58,9 @@
 <h2>棚別分析</h2>
 <p class="muted">棚データは共通BMMスプレッドシートの「棚番号」タブから自動同期します。各列の1行目を店舗名として扱い、店舗列が増えても自動で読み取ります。JANコードと棚番号を照合し、売上の高い棚から順に表示します。商品名・品番は共通商品マスタのJAN一致から取得します。除外棚は店舗ごとの設定内容を使用します。</p>
 <div id="shelfCoverage"></div><div id="shelfTable"></div>
+<h3 style="margin-top:20px">棚データ未登録の商品（要確認・上位20件）</h3>
+<p class="muted">売上はあるのに、共通棚データに登録が見つからなかった商品です。棚番号タブへの登録漏れの可能性があります。</p>
+<div id="shelfUnmatched"></div>
 </article></section>
 
 <section id="abc" class="tab-panel"><article class="card"><h2>ABC分析</h2><p class="muted">売上構成比の累計70%までA、90%までB、それ以外C。</p><div id="abcTable"></div></article></section>
@@ -83,7 +87,10 @@
 
 <section id="orders" class="tab-panel">
   <article class="card">
-    <h2>発注候補</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <h2 style="margin:0">発注候補</h2>
+      <button id="exportOrdersBtn" class="btn">CSVでダウンロード</button>
+    </div>
     <p class="muted">選択期間の販売ペースを7日換算し、約2週間分を目標在庫として簡易発注数を算出します。最終発注判断は店舗状況・入荷予定を確認してください。</p>
     <div class="mini-kpis" id="orderSummary"></div>
     <div id="orderTable"></div>
@@ -106,14 +113,21 @@
 <article class="card"><h2>保存データ</h2><div id="historySummary"></div></article>
 <article class="card"><h2>履歴の保護</h2><p class="muted">共有履歴設定後はGoogle側に最大3年保存し、どのブラウザ・PCでも同じ売上履歴を利用します。バックアップ機能も予備として残しています。</p>
 <div class="history-actions"><button id="exportHistoryBtn" class="btn btn-primary">全データをバックアップ</button><label class="btn file-btn">バックアップを復元<input id="importHistoryInput" type="file" accept=".json" hidden></label></div></article>
-</div><article class="card"><h2>同期・取込履歴</h2><div id="syncLogTable"></div></article></section>
+</div>
+<article class="card"><h2>店舗別 最終同期</h2><p class="muted">各店舗の売上データが最後に正常に取り込めた時刻です。長時間更新されていない店舗は要確認です。</p><div id="storeSyncStatus"></div></article>
+<article class="card"><h2>同期・取込履歴</h2><div id="syncLogTable"></div></article></section>
 </main>
 
 <dialog id="settingsDialog"><form method="dialog" class="dialog-card">
 <div class="dialog-head"><div><span class="brand-kicker">BMM WEB</span><h2>店舗データ設定</h2></div><button value="cancel" class="icon-btn">×</button></div>
-<p class="muted">各店舗の売上タブURLと、その店舗で集計対象から外す棚番号を登録します。除外棚は「1,2,3」のようにカンマ区切りで入力してください。棚番号が変わった場合はここを書き換えるだけで対応できます。</p>
+<p class="muted">各店舗の売上タブURLと、その店舗で集計対象から外す棚番号を登録します。除外棚は「1,2,3」のようにカンマ区切りで入力してください。棚番号が変わった場合はここを書き換えるだけで対応できます。各行の「接続確認」で、その店舗のシートが今読み込めるかその場で確認できます。</p>
 <div id="storeRows"></div><button id="addStoreBtn" type="button" class="btn">＋ 店舗を追加</button>
 <div class="shared-history-setting"><label>共有売上履歴API（通常は「BMM設定」シートから自動取得）<input id="historyApiUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec"></label><p class="muted">設定後は売上履歴をGoogle側に最大3年保存し、Chrome・Firefox・別PC・スマホで同じ履歴を使用します。</p></div>
+<div class="danger-zone" style="margin-top:16px;padding-top:12px;border-top:1px solid #ddd">
+  <p class="muted">通常は使いません。通信の乱れなどで端末のデータがサーバーとズレてしまった場合の緊急用です。</p>
+  <button id="forceResyncBtn" type="button" class="btn btn-danger">共有データを完全に再取得（緊急用）</button>
+  <p class="message" id="forceResyncMessage"></p>
+</div>
 <div class="dialog-actions"><button id="saveSettingsBtn" type="button" class="btn btn-primary">保存して同期</button></div><div id="settingsMessage" class="message"></div>
 </form></dialog>
 
@@ -133,7 +147,7 @@
   </div>
 </dialog>
 
-<template id="storeRowTemplate"><div class="store-row store-row-v101"><input class="store-name" placeholder="店舗名（例：東大阪店）"><input class="store-url" placeholder="売上タブを開いた状態のURL"><input class="store-excluded-shelves" placeholder="除外棚（例：1,2,3,45,51）"><button type="button" class="btn btn-danger remove-store">削除</button></div></template>
+<template id="storeRowTemplate"><div class="store-row store-row-v101"><input class="store-name" placeholder="店舗名（例：東大阪店）"><input class="store-url" placeholder="売上タブを開いた状態のURL"><input class="store-excluded-shelves" placeholder="除外棚（例：1,2,3,45,51）"><button type="button" class="btn test-store">接続確認</button><button type="button" class="btn btn-danger remove-store">削除</button><div class="test-store-result muted"></div></div></template>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="core.js"></script><script src="db.js"></script><script src="app.js"></script>
