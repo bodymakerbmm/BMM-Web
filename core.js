@@ -328,6 +328,16 @@
 
   function shelfRowKey(r){return [normalizeText(r.store),r.date,r.time,normalizeText(r.shelf),normalizeText(r.jan),r._line||""].join("|");}
 
+  // 入力された店舗名の表記ゆれ（「東大阪」と「東大阪店」など）を、実際に登録されている
+  // 店舗名の一覧と照らして吸収する。完全一致を優先し、無ければ部分一致で探す。
+  function resolveStoreName(typed,storeNames){
+    const t=normalizeText(typed);
+    if(!t) return "";
+    for(const s of storeNames||[]) if(normalizeText(s)===t) return s;
+    for(const s of storeNames||[]){const n=normalizeText(s);if(n.includes(t)||t.includes(n)) return s;}
+    return String(typed||"").trim();
+  }
+
   function parseExcludedShelves(value){
     if(value instanceof Set)return new Set([...value].map(v=>String(v).trim()).filter(Boolean));
     if(Array.isArray(value))return new Set(value.map(v=>String(v).trim()).filter(Boolean));
@@ -567,7 +577,7 @@
     sheetUrlToCsv,detectSalesMapping,rowsToRecords,inspectSalesRecords,isPlausibleSalesRecord,validateSalesRecords,productKey,recordKey,
     filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods,dateSpanDays,shiftDate,previousPeriodRange,inventorySignal,reorderSuggestion,matchesSearch,dataRange,cutoffDateForYears,maxRecordDate,
     parseShelfText,parseShelfGridRows,shelfRowKey,parseExcludedShelves,allocateShelfSales,detectMasterLayout,masterRowsToRecords,buildMasterIndex,enrichWithMaster,
-    buildParentSkuIndex,parseShelfChangeLog,expandShelfChangeLog,applyShelfOverrides,
+    buildParentSkuIndex,parseShelfChangeLog,expandShelfChangeLog,applyShelfOverrides,resolveStoreName,
     inferDateFromFilename,detectInventoryLayout,inventoryRowsToRecords,compactInventoryRecords,stockRowKey,latestSnapshotDate
   };
 });
