@@ -15,6 +15,7 @@ const DEFAULT_STORES=[
 const COMMON_DATA_SPREADSHEET_ID="1ZYzmDyYK2Oj8zGBsmb2EloI2jWHvFuXLj49pB5goWtw";
 const COMMON_MASTER_GID="0";
 const COMMON_SHELF_GID="61629702";
+const SHELF_CHANGE_LOG_SHEET="棚番号_変更履歴"; // 頭品番単位の簡易な棚移動履歴（このタブ名で作成してもらう）
 
 let state={config:{stores:[...DEFAULT_STORES],commonMasterUrl:"",historyApiUrl:""},records:[],filtered:[],shelfRows:[],shelfHistory:[],stockRows:[],masterRows:[],syncLog:[],lastSynced:""};
 
@@ -625,6 +626,21 @@ async function fetchSheetGidRows(spreadsheetId,gid,label){
   if(!rows.length) throw new Error(`${label}: データが空です。`);
   return rows;
 }
+// シート名（gidではなく名前）で1タブ分の内容を取得する。タブが存在しない場合は空配列を返す
+// （棚番号の変更履歴タブのように「あれば使う・無ければ何もしない」用途向け）。
+async function fetchSheetNameRowsOptional(spreadsheetId,sheetName){
+  try{
+    const u=`https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&headers=0`;
+    const res=await fetch(u,{cache:"no-store"});
+    if(!res.ok) return [];
+    const text=await res.text();
+    if(/<!doctype html|<html/i.test(text)) return [];
+    return C.parseCSV(text);
+  }catch(e){
+    console.warn(`${sheetName} 取得失敗（未使用の場合は無視して問題ありません）`,e);
+    return [];
+  }
+}
 
 async function fetchCsvRows(url,label){
   const res=await fetch(C.sheetUrlToCsv(url),{cache:"no-store"});if(!res.ok)throw new Error(`${label}: 読込失敗（${res.status}）`);
@@ -684,18 +700,30 @@ async function syncCommonMasterAndShelves(){
   state.masterRows=masterRecords;
   masterCount=masterRecords.length;
 
-  // 棚番号: gidを固定して横持ち店舗列を取得
+  // 棚番号: gidを固定して横持ち店舗列を取得（ハンディ実績ベースの生データ＝ベースライン）
   const shelfGrid=await fetchSheetGidRows(COMMON_DATA_SPREADSHEET_ID,COMMON_SHELF_GID,"共通棚データ");
   const shelfRecords=C.parseShelfGridRows(shelfGrid);
-  if(shelfRecords.length){
+
+  // 棚番号_変更履歴: 頭品番単位の軽い変更履歴（無ければ何もしない。棚卸しの間のレイアウト変更用）
+  const changeLogRows=await fetchSheetNameRowsOptional(COMMON_DATA_SPREADSHEET_ID,SHELF_CHANGE_LOG_SHEET);
+  const changeLog=C.parseShelfChangeLog(changeLogRows);
+  const parentIndex=C.buildParentSkuIndex(masterRecords);
+  const expandedChanges=C.expandShelfChangeLog(changeLog,parentIndex);
+  const today=C.localToday();
+
+  if(shelfRecords.length||expandedChanges.length){
     const byStore=new Map();
     for(const r of shelfRecords){
       if(!r.store) continue;
       if(!byStore.has(r.store)) byStore.set(r.store,[]);
       byStore.get(r.store).push(r);
     }
-    const effectiveFrom=C.localToday();
-    for(const [store,rows] of byStore){
+    // 変更履歴にしか出てこない店舗（ベースライン側に1件も無い店舗）も取りこぼさないようにする
+    for(const c of expandedChanges) if(c.store && !byStore.has(c.store)) byStore.set(c.store,[]);
+
+    const effectiveFrom=today;
+    for(const [store,baseRows] of byStore){
+      const rows=C.applyShelfOverrides(baseRows,expandedChanges,effectiveFrom);
       await BMMDB.replaceShelfDates(store,rows);
       await BMMDB.replaceShelfSnapshot(store,effectiveFrom,rows);
       shelfCount+=rows.length;
