@@ -5,6 +5,11 @@
 <meta name="description" content="BODYMAKER BMM Web - 店舗売上・棚・在庫分析">
 <title>BMM Web Version 3.2.4</title>
 <link rel="stylesheet" href="styles.css">
+<style>
+.shelf-change-results{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto}
+.shelf-change-hit{display:block;width:100%;text-align:left;padding:8px 10px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;font:inherit}
+.shelf-change-hit:hover{background:#f2f6fc;border-color:#9db8d9}
+</style>
 </head>
 <body>
 <header class="topbar">
@@ -13,6 +18,7 @@
     <span id="syncStatus" class="status">起動確認中…</span>
     <button id="refreshBtn" class="btn btn-primary">今すぐ更新</button>
     <button class="btn secondary" id="importDataBtn">在庫データ</button>
+    <button class="btn secondary" id="shelfChangeBtn">棚番号登録</button>
     
     <button id="settingsBtn" class="btn">店舗設定</button>
   </div>
@@ -143,6 +149,34 @@
       <label>全店舗在庫Excel<input id="stockFileInput" type="file" accept=".xlsx,.xls,.csv"></label>
       <button class="btn primary" id="importStockBtn">在庫Excelを取り込む</button>
       <p class="message" id="stockImportMessage"></p>
+    </article>
+  </div>
+</dialog>
+
+<dialog id="shelfChangeDialog" class="modal">
+  <div class="modal-head"><div><div class="eyebrow">BMM WEB</div><h2>棚番号登録</h2></div><button class="icon-btn" onclick="document.getElementById('shelfChangeDialog').close()">×</button></div>
+  <div class="import-grid one-column">
+    <article class="import-box">
+      <p class="note">今その棚にある商品を自動で全部見つけて、まとめて新しい棚番号に付け替えます。1棚に何十商品あっても、この2つの番号を入れるだけでOKです。</p>
+      <label>店舗<select id="shelfChangeStore"></select></label>
+      <label>今の棚番号（移動前）<input id="shelfMoveFrom" placeholder="例：5" autocomplete="off"></label>
+      <button class="btn" id="shelfMovePreviewBtn" type="button">この棚の商品を確認</button>
+      <div id="shelfMovePreview" class="shelf-change-results"></div>
+      <label>新しい棚番号（移動後）<input id="shelfMoveTo" placeholder="例：15" autocomplete="off"></label>
+      <button class="btn primary" id="shelfMoveSubmitBtn" type="button">この棚をまとめて移動する</button>
+      <p class="message" id="shelfMoveMessage"></p>
+
+      <details style="margin-top:18px">
+        <summary class="muted">商品を1つだけ個別に登録したい場合はこちら</summary>
+        <div style="margin-top:10px">
+          <label>商品検索（JAN・品番・商品名）<input id="shelfChangeSearch" placeholder="例：1FKA、フルコン空手衣" autocomplete="off"></label>
+          <div id="shelfChangeResults" class="shelf-change-results"></div>
+          <div id="shelfChangeSelected" class="muted"></div>
+          <label>新しい棚番号<input id="shelfChangeShelfNo" placeholder="例：15"></label>
+          <button class="btn" id="shelfChangeSubmitBtn" type="button">この商品だけ登録する</button>
+          <p class="message" id="shelfChangeMessage"></p>
+        </div>
+      </details>
     </article>
   </div>
 </dialog>
