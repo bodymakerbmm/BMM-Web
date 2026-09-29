@@ -858,6 +858,118 @@ function openImport(){
   renderStoreOptions();const today=C.localToday();if(!$("stockSnapshotDate").value)$("stockSnapshotDate").value=today;
   $("stockImportMessage").textContent="";$("importDataDialog").showModal();
 }
+
+// ===== 棚番号登録 =====
+// 通信は登録ボタンを押した時の1回だけ（すでに端末にある商品マスタ・棚データの中から探すだけなので、
+// 「今すぐ更新」の重さには影響しない）。
+let shelfChangeSelected=null; // {parentSku,name}（1件だけ登録する場合）
+let shelfMoveMatches=[]; // {parentSku,name}[]（棚ごとまとめて移動する場合）
+function openShelfChange(){
+  const sel=$("shelfChangeStore");
+  sel.innerHTML=state.config.stores.map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("");
+  $("shelfChangeSearch").value="";$("shelfChangeResults").innerHTML="";$("shelfChangeShelfNo").value="";
+  $("shelfChangeMessage").textContent="";$("shelfChangeSelected").textContent="";
+  shelfChangeSelected=null;
+  $("shelfMoveFrom").value="";$("shelfMoveTo").value="";$("shelfMovePreview").innerHTML="";$("shelfMoveMessage").textContent="";
+  shelfMoveMatches=[];
+  $("shelfChangeDialog").showModal();
+}
+
+// 指定した店舗・棚番号に、今現在（最新の棚スナップショット）何の商品（頭品番）が
+// 割り当てられているかを調べる。通信なし・端末内のデータだけで完結する。
+function productsOnShelf(storeName,shelfNo){
+  const target=String(shelfNo||"").trim();
+  if(!storeName||!target)return[];
+  const rows=shelfSnapshotForDate(storeName,C.localToday());
+  const janToInfo=new Map();
+  for(const m of state.masterRows) if(m.jan) janToInfo.set(m.jan,{parentSku:m.parentSku||"",name:m.name||m.sku||m.jan});
+  const seen=new Map();
+  for(const r of rows){
+    if(String(r.shelf||"").trim()!==target)continue;
+    const info=janToInfo.get(r.jan);
+    if(!info||!info.parentSku)continue; // 頭品番が商品マスタから分からない商品はまとめ移動の対象外
+    if(!seen.has(info.parentSku))seen.set(info.parentSku,info.name);
+  }
+  return [...seen.entries()].map(([parentSku,name])=>({parentSku,name}));
+}
+function previewShelfMove(){
+  const store=$("shelfChangeStore").value;
+  const from=$("shelfMoveFrom").value.trim();
+  const box=$("shelfMovePreview");
+  if(!store||!from){box.innerHTML='<div class="muted">店舗と、今の棚番号を入力してください。</div>';shelfMoveMatches=[];return;}
+  shelfMoveMatches=productsOnShelf(store,from);
+  if(!shelfMoveMatches.length){
+    box.innerHTML=`<div class="muted">棚番号「${esc(from)}」に商品が見つかりませんでした。番号の表記（半角/全角など）を確認してください。</div>`;
+    return;
+  }
+  box.innerHTML=`<div class="muted">${shelfMoveMatches.length}件の商品が見つかりました（この内容で移動します）：</div>`+
+    shelfMoveMatches.map(m=>`<div class="shelf-change-hit" style="cursor:default">${esc(m.name)}<span class="muted">（頭品番: ${esc(m.parentSku)}）</span></div>`).join("");
+}
+async function submitShelfMove(){
+  const store=$("shelfChangeStore").value;
+  const to=$("shelfMoveTo").value.trim();
+  const msg=$("shelfMoveMessage");
+  if(!store){msg.textContent="店舗を選んでください。";return;}
+  if(!shelfMoveMatches.length){msg.textContent="先に「この棚の商品を確認」を押してください。";return;}
+  if(!to){msg.textContent="新しい棚番号を入力してください。";return;}
+  const apiUrl=await discoverHistoryApiUrl();
+  if(!apiUrl){msg.textContent="共有データAPIが設定されていません。";return;}
+  const btn=$("shelfMoveSubmitBtn");btn.disabled=true;msg.textContent="登録中…";
+  try{
+    const parentSkus=shelfMoveMatches.map(m=>m.parentSku);
+    await postApiForm(apiUrl,{action:"shelfChangeBulk",change:{date:C.localToday(),store,shelf:to,parentSkus}},"BMM_API_SAVE",30000);
+    msg.textContent=`登録しました：${store}の${parentSkus.length}商品を棚${to}へ移動しました。反映するには「今すぐ更新」を押してください。`;
+    $("shelfMoveFrom").value="";$("shelfMoveTo").value="";$("shelfMovePreview").innerHTML="";shelfMoveMatches=[];
+  }catch(e){
+    msg.textContent=`登録に失敗しました：${e.message}`;
+  }finally{
+    btn.disabled=false;
+  }
+}
+
+function renderShelfChangeResults(){
+  const q=C.normalizeText($("shelfChangeSearch").value);
+  const box=$("shelfChangeResults");
+  if(!q){box.innerHTML="";return;}
+  const seen=new Set();
+  const hits=[];
+  for(const m of state.masterRows){
+    if(!m.parentSku||seen.has(m.parentSku))continue;
+    const hay=C.normalizeText(`${m.jan} ${m.sku} ${m.parentSku} ${m.name}`);
+    if(!hay.includes(q))continue;
+    seen.add(m.parentSku);
+    hits.push(m);
+    if(hits.length>=8)break;
+  }
+  box.innerHTML=hits.map(m=>`<button type="button" class="shelf-change-hit" data-parent="${esc(m.parentSku)}" data-name="${esc(m.name)}">${esc(m.name)}<span class="muted">（頭品番: ${esc(m.parentSku)}）</span></button>`).join("")||`<div class="muted">一致する商品がありません</div>`;
+  box.querySelectorAll(".shelf-change-hit").forEach(btn=>{
+    btn.onclick=()=>{
+      shelfChangeSelected={parentSku:btn.dataset.parent,name:btn.dataset.name};
+      $("shelfChangeSelected").textContent=`選択中：${btn.dataset.name}（頭品番: ${btn.dataset.parent}）`;
+      box.innerHTML="";$("shelfChangeSearch").value=btn.dataset.name;
+    };
+  });
+}
+async function submitShelfChange(){
+  const store=$("shelfChangeStore").value;
+  const shelf=$("shelfChangeShelfNo").value.trim();
+  const msg=$("shelfChangeMessage");
+  if(!store){msg.textContent="店舗を選んでください。";return;}
+  if(!shelfChangeSelected){msg.textContent="商品を検索して選択してください。";return;}
+  if(!shelf){msg.textContent="新しい棚番号を入力してください。";return;}
+  const apiUrl=await discoverHistoryApiUrl();
+  if(!apiUrl){msg.textContent="共有データAPIが設定されていません。";return;}
+  const btn=$("shelfChangeSubmitBtn");btn.disabled=true;msg.textContent="登録中…";
+  try{
+    await postApiForm(apiUrl,{action:"shelfChange",change:{date:C.localToday(),store,parentSku:shelfChangeSelected.parentSku,shelf}},"BMM_API_SAVE",30000);
+    msg.textContent=`登録しました：${store} / ${shelfChangeSelected.name} → 棚${shelf}。反映するには「今すぐ更新」を押してください。`;
+    $("shelfChangeShelfNo").value="";
+  }catch(e){
+    msg.textContent=`登録に失敗しました：${e.message}`;
+  }finally{
+    btn.disabled=false;
+  }
+}
 // 在庫データを店舗ごとに分けて順番に共有サーバーへ送る。
 // 1回のリクエストが大きすぎるとタイムアウトしやすいため、店舗単位（数千件程度）に分割する。
 // Code.gs側は「送られてきた店舗だけ入れ替え、他店舗は残す」動きになっているので、
@@ -953,6 +1065,11 @@ async function importAll(file){
 function bind(){
   $("refreshBtn").onclick=()=>syncAll();$("settingsBtn").onclick=openSettings;$("saveSettingsBtn").onclick=saveSettings;$("addStoreBtn").onclick=()=>addStoreRow();
   $("importDataBtn").onclick=openImport;$("importStockBtn").onclick=importStock;
+  $("shelfChangeBtn").onclick=openShelfChange;
+  $("shelfMovePreviewBtn").onclick=previewShelfMove;
+  $("shelfMoveSubmitBtn").onclick=submitShelfMove;
+  $("shelfChangeSearch").oninput=renderShelfChangeResults;
+  $("shelfChangeSubmitBtn").onclick=submitShelfChange;
   $("applyFilterBtn").onclick=applyFilter;$("clearFilterBtn").onclick=()=>{$("dateFrom").value="";$("dateTo").value="";applyFilter();};
   $("productSearch").oninput=()=>renderProducts(C.aggregateProducts(state.filtered).sort((a,b)=>b.sales-a.sales));$("rankingType").onchange=()=>renderRanking(C.aggregateProducts(state.filtered));
   $("comparePeriodsBtn").onclick=comparePeriods;$("stockSnapshotSelect").onchange=()=>{renderStock();renderProducts(C.aggregateProducts(state.filtered));};
