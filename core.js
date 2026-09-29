@@ -334,6 +334,78 @@
     return new Set(String(value||"").normalize("NFKC").split(/[,\s、，]+/).map(v=>v.trim()).filter(Boolean));
   }
 
+  // ===== 棚番号の簡易更新（頭品番＋新棚番号だけの変更履歴） =====
+  // 棚卸し（年2回）でしか棚番号タブ全体が更新されない問題への対応。
+  // 「変更日・店舗・頭品番・新棚番号」だけの軽い変更履歴タブを別途用意し、
+  // 商品マスタの頭品番からその頭品番に属する全JAN（サイズ・カラー違い）へ展開して、
+  // 棚番号タブ（ハンディ由来の実績データ）の上に「その日時点で有効な割り当て」として重ねる。
+
+  // 頭品番 → [{jan,sku}, ...] の索引を作る（商品マスタから）。
+  function buildParentSkuIndex(masterRows){
+    const idx=new Map();
+    for(const r of masterRows||[]){
+      const key=normalizeText(r.parentSku);
+      if(!key||!r.jan) continue;
+      if(!idx.has(key)) idx.set(key,[]);
+      idx.get(key).push({jan:r.jan,sku:r.sku||""});
+    }
+    return idx;
+  }
+
+  // 変更履歴タブ（1行目が見出し）を読み取る。見出しは文字列で判定するので、
+  // 列の順番が多少変わっても動く。必要な見出し：変更日・店舗・頭品番・新棚番号。
+  function parseShelfChangeLog(rows){
+    if(!Array.isArray(rows)||rows.length<2) return [];
+    const header=(rows[0]||[]).map(v=>normalizeText(v));
+    const dateIdx=header.findIndex(v=>v.includes("変更日")||v.includes("日付"));
+    const storeIdx=header.findIndex(v=>v.includes("店舗")||v.includes("店名"));
+    const parentIdx=header.findIndex(v=>v.includes("頭品番"));
+    const shelfIdx=header.findIndex(v=>v.includes("新棚番号")||v.includes("新棚")||(v.includes("棚番号")&&!v.includes("旧")));
+    if(dateIdx<0||storeIdx<0||parentIdx<0||shelfIdx<0) return [];
+    const out=[];
+    for(let i=1;i<rows.length;i++){
+      const row=rows[i]||[];
+      const date=parseDate(row[dateIdx]);
+      const store=String(row[storeIdx]??"").trim();
+      const parentSku=String(row[parentIdx]??"").normalize("NFKC").trim();
+      const shelf=String(row[shelfIdx]??"").trim();
+      if(!date||!store||!parentSku||!shelf) continue; // 必須項目が欠けている行は無視
+      out.push({date,store,parentSku,shelf});
+    }
+    return out;
+  }
+
+  // 変更履歴（頭品番単位）を、商品マスタの索引を使って「店舗×JAN単位」の割り当てへ展開する。
+  function expandShelfChangeLog(changeLog,parentIndex){
+    const out=[];
+    for(const c of changeLog||[]){
+      const items=parentIndex.get(normalizeText(c.parentSku))||[];
+      for(const it of items) out.push({date:c.date,store:c.store,jan:it.jan,sku:it.sku,shelf:c.shelf});
+    }
+    return out;
+  }
+
+  // ベースとなる棚番号データ（ハンディ実績など）に、asOfDate時点で有効な変更履歴を重ねる。
+  // 同じ店舗×JANに対して複数の変更履歴がある場合は、日付が新しいものを優先する。
+  // 変更履歴で上書きされた店舗×JANは、ベース側の古い行を取り除き、変更後の棚番号1件だけにする
+  // （ベースに残っていた過去の別の棚番号と混ざって主棚判定がぶれないようにするため）。
+  function applyShelfOverrides(baselineRows,expandedChanges,asOfDate){
+    const winner=new Map(); // key: store|jan → {date,store,jan,sku,shelf}
+    for(const c of expandedChanges||[]){
+      if(!c.date||c.date>asOfDate) continue; // まだ有効になっていない未来の変更は無視
+      const key=[normalizeText(c.store),normalizeText(c.jan)].join("|");
+      const cur=winner.get(key);
+      if(!cur||c.date>=cur.date) winner.set(key,c); // 同日なら後勝ち、日付が新しい方を優先
+    }
+    if(!winner.size) return baselineRows||[];
+    const kept=(baselineRows||[]).filter(r=>!winner.has([normalizeText(r.store),normalizeText(r.jan)].join("|")));
+    const overrideRows=[...winner.values()].map(c=>({
+      store:c.store,jan:c.jan,shelf:c.shelf,sku:c.sku||"",
+      date:c.date,time:"",qty:1,_line:0,_fromChangeLog:true
+    }));
+    return kept.concat(overrideRows);
+  }
+
   function allocateShelfSales(salesRecords,shelfRows,exclude=EXCLUDED_SHELVES){
     // 2.2.4: 1件の売上数量を複数棚へ比率配賦すると「売れ数」が小数になるため廃止。
     // 同一JANが複数棚に存在する場合は、DAT1数量が最も多い棚を主棚として1棚だけに帰属させる。
@@ -397,19 +469,21 @@
 
     let jan=findHeaderIndex(header,["UPCコード","UPC","JANコード","JAN","バーコード"]);
     let sku=findHeaderIndex(header,["外部ID","品番","頭品番","商品コード"]);
+    let parentSku=findHeaderIndex(header,["頭品番"]);
     let name=findHeaderIndex(header,["表示名","商品名","品名","名前"]);
     let price=findHeaderIndex(header,["オンライン価格","価格"]);
     let category=findHeaderIndex(header,["商品分類"]);
 
     // BODYMAKER商品マスタ既知レイアウトの安全なフォールバック
-    // G=外部ID(品番), J=表示名, M=オンライン価格, S=商品分類, AA=UPC/JAN
+    // F=頭品番, G=外部ID(品番), J=表示名, M=オンライン価格, S=商品分類, AA=UPC/JAN
+    if(parentSku<0 && header.length>=6) parentSku=5;
     if(sku<0 && header.length>=7) sku=6;
     if(name<0 && header.length>=10) name=9;
     if(price<0 && header.length>=13) price=12;
     if(category<0 && header.length>=19) category=18;
     if(jan<0 && header.length>=27) jan=26;
 
-    return {headerRow:hr>=0?hr:0,jan,sku,name,price,category};
+    return {headerRow:hr>=0?hr:0,jan,sku,parentSku,name,price,category};
   }
 
   function masterRowsToRecords(rows){
@@ -417,10 +491,11 @@
     for(const row of src){
       const jan=m.jan>=0?normalizeCode(row[m.jan]):"";
       const sku=m.sku>=0?String(row[m.sku]??"").normalize("NFKC").trim():"";
+      const parentSku=m.parentSku>=0?String(row[m.parentSku]??"").normalize("NFKC").trim():"";
       const name=m.name>=0?String(row[m.name]??"").trim():"";
       if(!jan) continue; // 商品名連携の正本はJAN一致。JAN無し行はマスタ対象外。
       out.push({
-        jan,sku,name,
+        jan,sku,parentSku,name,
         price:m.price>=0?parseNumber(row[m.price]):0,
         category:m.category>=0?String(row[m.category]??"").trim():""
       });
@@ -492,6 +567,7 @@
     sheetUrlToCsv,detectSalesMapping,rowsToRecords,inspectSalesRecords,isPlausibleSalesRecord,validateSalesRecords,productKey,recordKey,
     filterRecords,aggregateProducts,aggregateBy,kpis,abcAnalysis,comparePeriods,dateSpanDays,shiftDate,previousPeriodRange,inventorySignal,reorderSuggestion,matchesSearch,dataRange,cutoffDateForYears,maxRecordDate,
     parseShelfText,parseShelfGridRows,shelfRowKey,parseExcludedShelves,allocateShelfSales,detectMasterLayout,masterRowsToRecords,buildMasterIndex,enrichWithMaster,
+    buildParentSkuIndex,parseShelfChangeLog,expandShelfChangeLog,applyShelfOverrides,
     inferDateFromFilename,detectInventoryLayout,inventoryRowsToRecords,compactInventoryRecords,stockRowKey,latestSnapshotDate
   };
 });
