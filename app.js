@@ -706,7 +706,8 @@ async function syncCommonMasterAndShelves(){
 
   // 棚番号_変更履歴: 頭品番単位の軽い変更履歴（無ければ何もしない。棚卸しの間のレイアウト変更用）
   const changeLogRows=await fetchSheetNameRowsOptional(COMMON_DATA_SPREADSHEET_ID,SHELF_CHANGE_LOG_SHEET);
-  const changeLog=C.parseShelfChangeLog(changeLogRows);
+  const configuredStoreNames=state.config.stores.map(s=>s.name);
+  const changeLog=C.parseShelfChangeLog(changeLogRows).map(c=>({...c,store:C.resolveStoreName(c.store,configuredStoreNames)}));
   const parentIndex=C.buildParentSkuIndex(masterRecords);
   const expandedChanges=C.expandShelfChangeLog(changeLog,parentIndex);
   const today=C.localToday();
