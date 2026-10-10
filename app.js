@@ -794,7 +794,7 @@ ${e.message}`);}
       if(!fresh.length&&errors.length&&!state.records.length)throw new Error(errors.join("\
 ")||"データを取得できません。");
     }
-    await BMMDB.pruneBefore(C.cutoffDateForYears(C.localToday(),3));state.lastSynced=new Date().toISOString();await BMMDB.setMeta("lastSynced",state.lastSynced);await loadState();renderAll();const hl=apiUrl?` / 共有履歴${sharedCount}行 / 共有在庫${sharedStockCount}行`:" / 共有履歴未設定",cl=commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:"";if(errors.length){updateStatus(`一部売上シート読込不可 ${errors.length}店舗 / ${updated.join("・")}${hl}${cl}`);if(!options.silent&&!apiUrl)alert(errors.join("\
+    await BMMDB.pruneBefore(C.cutoffDateForYears(C.localToday(),3));state.lastSynced=new Date().toISOString();await BMMDB.setMeta("lastSynced",state.lastSynced);await loadState();renderAll();const hl=apiUrl?` / 共有履歴${sharedCount}行 / 共有在庫${sharedStockCount}行`:" / 共有履歴未設定",cl=commonSync?` / マスタ${commonSync.masterCount}件(JAN${commonSync.masterJanCount}件)・棚${commonSync.shelfCount}行`:"";if(errors.length){updateStatus(`一部売上シート読込不可 ${errors.length}店舗 / ${updated.join("・")}${hl}${cl}`);if(!options.silent)alert(errors.join("\
 "));}else if(warnings.length){updateStatus(`${total}行更新（${updated.join("・")}）${hl}${cl}`);if(!options.silent)alert(`同期完了\
 \
 ${warnings.join("\
