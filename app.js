@@ -571,7 +571,7 @@ function postApiForm(apiUrl,payload,expectedType,timeoutMs=30000){
 }
 function latestInventoryRows(records){const rs=Array.isArray(records)?records:[],latestDate=[...new Set(rs.map(r=>String(r.snapshotDate||r.date||"")).filter(Boolean))].sort().at(-1)||"";return {latestDate,rows:latestDate?rs.filter(r=>String(r.snapshotDate||r.date||"")===latestDate):[]};}
 function postHistoryForm(apiUrl,records){return postApiForm(apiUrl,{version:1,records:prepareHistorySyncRecords(records)},"BMM_API_SAVE",30000);}
-function fetchHistoryJsonp(apiUrl,action="history"){return new Promise((resolve,reject)=>{const cb=`__bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`,sc=document.createElement("script");let done=false;const clean=()=>{try{delete window[cb];}catch{}sc.remove();},timer=setTimeout(()=>{if(done)return;done=true;clean();reject(new Error("共有データAPIの確認がタイムアウトしました。"));},15000);window[cb]=p=>{if(done)return;done=true;clearTimeout(timer);clean();p&&p.ok===true?resolve({records:Array.isArray(p.records)?p.records:[]}):reject(new Error(p?.error||"共有データAPIの読込に失敗しました。"));};sc.onerror=()=>{if(done)return;done=true;clearTimeout(timer);clean();reject(new Error("共有データAPIへ接続できません。"));};const u=`${apiUrl}${apiUrl.includes("?")?"&":"?"}action=${encodeURIComponent(action)}&callback=${encodeURIComponent(cb)}&_=${Date.now()}`;sc.src=u;document.head.appendChild(sc);});}
+function fetchHistoryJsonp(apiUrl,action="history",timeoutMs=15000){return new Promise((resolve,reject)=>{const cb=`__bmmh_${Date.now()}_${Math.random().toString(36).slice(2)}`,sc=document.createElement("script");let done=false;const clean=()=>{try{delete window[cb];}catch{}sc.remove();},timer=setTimeout(()=>{if(done)return;done=true;clean();reject(new Error("共有データAPIの確認がタイムアウトしました。"));},timeoutMs);window[cb]=p=>{if(done)return;done=true;clearTimeout(timer);clean();p&&p.ok===true?resolve({records:Array.isArray(p.records)?p.records:[]}):reject(new Error(p?.error||"共有データAPIの読込に失敗しました。"));};sc.onerror=()=>{if(done)return;done=true;clearTimeout(timer);clean();reject(new Error("共有データAPIへ接続できません。"));};const u=`${apiUrl}${apiUrl.includes("?")?"&":"?"}action=${encodeURIComponent(action)}&callback=${encodeURIComponent(cb)}&_=${Date.now()}`;sc.src=u;document.head.appendChild(sc);});}
 
 // ②混雑対策：開店直後などに複数店舗が同時に更新を押すと、共有データAPI側の順番待ち
 // （LockService）で一時的に失敗することがある。少し待って自動で再試行する。
@@ -749,7 +749,31 @@ async function syncAll(options={}){
   await repairSavedSalesData();let commonSync=null;try{commonSync=await syncCommonMasterAndShelves();}catch(e){console.warn(e);updateStatus(`共通データ同期失敗: ${e.message}`);if(!options.silent)alert(`共通データ同期失敗
 ${e.message}`);}
   if(!state.config.stores.length){if(!options.silent)$("settingsDialog").showModal();updateStatus("店舗設定が必要です");return;}$("refreshBtn").disabled=true;updateStatus(options.silent?"自動更新中…":"同期中…");
-  try{const midx=await masterIndex(),apiUrl=await discoverHistoryApiUrl(),results=await Promise.allSettled(state.config.stores.map(s=>fetchStore(s,midx)));let total=0,errors=[],updated=[],fresh=[];const warnings=[];for(let i=0;i<results.length;i++){const r=results[i],s=state.config.stores[i];if(r.status==="rejected"){errors.push(r.reason.message);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"売上エラー",store:`${s.name}（${String(r.reason.message||"").slice(0,60)}）`,rows:0});continue;}const p=r.value;fresh.push(...p.records);total+=p.records.length;updated.push(`${s.name} ${p.records.length}行`);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"売上",store:s.name,rows:p.records.length});if(p.ignored||p.invalid.length)warnings.push(`${s.name}: ${p.records.length}行取込 / 空行等${p.ignored}行無視 / 不正${p.invalid.length}行除外`);}
+  try{const midx=await masterIndex(),apiUrl=await discoverHistoryApiUrl();
+    // 売上シートは閲覧制限を掛けているため、ブラウザから直接は読めない。
+    // 共有APIがある場合は、シートの閲覧権限を持つGoogle側（Apps Script）に読み取りを任せ、
+    // 結果（店舗ごとの行数・エラー）だけを受け取る。APIが無い場合のみ従来どおり直接読む。
+    let results;
+    if(apiUrl){
+      results=state.config.stores.map(s=>({status:"rejected",reason:new Error(`${s.name}: 結果を受け取れませんでした。`)}));
+      try{
+        const r=await fetchHistoryJsonp(apiUrl,"syncStores",90000);
+        const list=(r.records||[]).filter(x=>x&&x.kind==="syncStoreResult");
+        if(!list.length)throw new Error("Apps Script（Code.gs）が古いままです。最新のCode.gsを貼り、デプロイを更新してください。");
+        const byName=new Map(list.map(x=>[C.normalizeText(x.store),x]));
+        results=state.config.stores.map(s=>{
+          const x=byName.get(C.normalizeText(s.name));
+          if(!x)return {status:"rejected",reason:new Error(`${s.name}: Apps Script側の店舗一覧に登録がありません（Code.gsのAUTO_SYNC_STORESを確認）。`)};
+          if(x.error)return {status:"rejected",reason:new Error(`${s.name}: ${x.error}`)};
+          return {status:"fulfilled",value:{records:[],ignored:0,invalid:[],total:x.rows,viaApi:true,rows:x.rows}};
+        });
+      }catch(e){
+        results=state.config.stores.map(s=>({status:"rejected",reason:new Error(`${s.name}: ${String(e.message||e)}`)}));
+      }
+    }else{
+      results=await Promise.allSettled(state.config.stores.map(s=>fetchStore(s,midx)));
+    }
+    let total=0,errors=[],updated=[],fresh=[];const warnings=[];for(let i=0;i<results.length;i++){const r=results[i],s=state.config.stores[i];if(r.status==="rejected"){errors.push(r.reason.message);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"売上エラー",store:`${s.name}（${String(r.reason.message||"").slice(0,60)}）`,rows:0});continue;}const p=r.value;const n=p.viaApi?p.rows:p.records.length;fresh.push(...p.records);total+=n;updated.push(`${s.name} ${n}行`);await BMMDB.addSyncLog({syncedAt:new Date().toISOString(),type:"売上",store:s.name,rows:n});if(p.ignored||p.invalid.length)warnings.push(`${s.name}: ${p.records.length}行取込 / 空行等${p.ignored}行無視 / 不正${p.invalid.length}行除外`);}
     let sharedCount=0,sharedStockCount=0;
     if(apiUrl){
       try{
@@ -817,7 +841,7 @@ function addStoreRow(data={}){
         const rows=await fetchCsvRows(url,name);
         if(resultEl){resultEl.textContent=`OK：${rows.length}行読み込めました。`;resultEl.style.color="#1a7f37";}
       }catch(e){
-        if(resultEl){resultEl.textContent=`NG：${e.message}`;resultEl.style.color="#c0392b";}
+        if(resultEl){resultEl.textContent=`NG：${e.message}（売上シートに閲覧制限を掛けている場合、この確認はNGになります。実際の取り込みはApps Script経由なので影響しません。結果は「保存履歴」タブの店舗別 最終同期で確認してください）`;resultEl.style.color="#c0392b";}
       }finally{
         testBtn.disabled=false;
       }
